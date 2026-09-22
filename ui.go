@@ -284,8 +284,10 @@ func (u *UI) build() {
 	}
 	u.reg("peers", u.peersTable)
 
-	quitBtn := widget.NewButton("Quit", a.quit)
+	quitBtn := widget.NewButton("Quit and disconnect", a.quit)
 	u.reg("quit", quitBtn)
+	closeHint := widget.NewLabel("Closing the window keeps tswipoexp running in the tray.")
+	closeHint.Importance = widget.LowImportance
 
 	top := container.NewVBox(
 		container.NewGridWithColumns(2,
@@ -306,7 +308,7 @@ func (u *UI) build() {
 		container.NewBorder(nil, nil, widget.NewLabel("Exit node:"), nil, u.exitNode),
 		container.NewBorder(nil, nil, nil, peersBtn, u.peersLabel),
 	)
-	bottom := container.NewHBox(quitBtn)
+	bottom := container.NewBorder(nil, nil, quitBtn, nil, closeHint)
 	u.win.SetContent(container.NewBorder(top, bottom, nil, nil, layout.NewSpacer()))
 	size := defaultWindowSize
 	if gs := loadGUIState(a.profiles.Root); gs.WindowWidth > 200 && gs.WindowHeight > 200 {
