@@ -281,7 +281,7 @@ func (u *UI) build() {
 	u.peersTable.UpdateHeader = func(id widget.TableCellID, o fyne.CanvasObject) {
 		o.(*widget.Label).SetText(u.peersHeader[id.Col])
 	}
-	for i, w := range []float32{220, 130, 80, 70, 200} {
+	for i, w := range []float32{270, 130, 80, 70, 200} {
 		u.peersTable.SetColumnWidth(i, w)
 	}
 	u.reg("peers", u.peersTable)
@@ -338,6 +338,38 @@ func (u *UI) build() {
 		})
 	} else {
 		u.win.SetCloseIntercept(a.quit)
+	}
+}
+
+// fitToScreen shrinks the window if it's taller or wider than the
+// screen, which happens on small, heavily scaled displays. It measures
+// the real on-screen window rather than trusting the canvas scale,
+// since the two didn't agree on a high-DPI laptop. It must run on the
+// UI goroutine after the window is shown.
+func (u *UI) fitToScreen() {
+	screenW, screenH, ok := screenSizePixels()
+	if !ok {
+		return
+	}
+	winW, winH, ok := windowSizePixels(u.win.Title())
+	if !ok || winW <= 0 || winH <= 0 {
+		return
+	}
+	sz := u.win.Canvas().Size()
+	// Leave room for the taskbar and some margin.
+	maxW, maxH := screenW*0.95, screenH*0.88
+	u.app.logf("fitToScreen: screen %vx%v px, window %vx%v px, canvas %vx%v pt", screenW, screenH, winW, winH, sz.Width, sz.Height)
+	newSz := sz
+	if winW > maxW {
+		newSz.Width = sz.Width * maxW / winW
+	}
+	if winH > maxH {
+		newSz.Height = sz.Height * maxH / winH
+	}
+	if newSz != sz {
+		u.app.logf("fitToScreen: resizing canvas to %vx%v pt", newSz.Width, newSz.Height)
+		u.win.Resize(newSz)
+		u.win.CenterOnScreen()
 	}
 }
 

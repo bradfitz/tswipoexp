@@ -162,8 +162,9 @@ can't use tailscaled's safesocket package because that sets Builtin
 Administrators as the pipe owner, which fails without admin rights.
 
 Creating the pipe is also the single-instance lock: a second copy
-fails to create it and exits with a message. The lock is taken before
-any profile directory is touched.
+fails to create it and exits after showing a message box (the GUI
+binary has no console). The lock is taken before any profile
+directory is touched.
 
 ### Registering the proxy with Windows
 
@@ -204,7 +205,10 @@ The app has a tray icon with Open and Quit. Closing the window hides
 it and the node keeps running; Quit (window or tray) stops everything
 and restores the proxy settings. The window size is remembered in
 tswipoexp-state/gui.json rather than Fyne's Preferences, which would
-write to the host user's app data.
+write to the host user's app data. On first run the window is shrunk
+to fit the screen shortly after it appears, since Fyne's scale on
+high-DPI laptops made the default size overflow; Fyne only knows its
+scale once the window exists.
 
 ### Logging
 

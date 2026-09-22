@@ -36,5 +36,7 @@ func saveGUIState(root string, s guiState) error {
 	return writeFileAtomic(filepath.Join(root, guiStateFile), append(b, '\n'))
 }
 
-// defaultWindowSize is used when no saved size exists.
+// defaultWindowSize is the initial window size when none is saved.
+// It's shrunk after the window is shown if it doesn't fit the screen;
+// see UI.fitToScreen.
 var defaultWindowSize = fyne.NewSize(760, 660)

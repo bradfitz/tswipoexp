@@ -102,15 +102,21 @@ func main() {
 	}
 
 	a.ui.refresh()
+	// The canvas scale is only known once the window exists, so fit
+	// the window to the screen shortly after it appears.
+	time.AfterFunc(300*time.Millisecond, func() { fyne.Do(a.ui.fitToScreen) })
+	time.AfterFunc(1500*time.Millisecond, func() { fyne.Do(a.ui.fitToScreen) })
 	a.ui.win.ShowAndRun()
 	a.stopBackend()
 }
 
-// fatal logs and exits. Since the GUI binary has no console on
-// Windows, the message also goes to the log file if one is open.
+// fatal logs the message, shows it to the user (the GUI binary has
+// no console on Windows), and exits.
 func fatal(logf func(string, ...any), format string, args ...any) {
-	logf(format, args...)
-	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	msg := fmt.Sprintf(format, args...)
+	logf("%s", msg)
+	fmt.Fprintln(os.Stderr, msg)
+	showFatal(msg)
 	os.Exit(1)
 }
 

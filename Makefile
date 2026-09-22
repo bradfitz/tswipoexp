@@ -78,7 +78,9 @@ ssh:
 clean:
 	rm -rf dist
 
-# shot captures the Windows box's primary screen to shot.png here.
+# shot captures the Windows box's primary screen to shot.png here. The
+# capture is made DPI aware first; otherwise it's a physical-pixel crop
+# of the top-left of a scaled display, which looks like cut-off windows.
 shot:
-	@tailcat ssh $(WIN_ADDR) 'Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $$bmp=New-Object System.Drawing.Bitmap $$b.Width,$$b.Height; $$g=[System.Drawing.Graphics]::FromImage($$bmp); $$g.CopyFromScreen($$b.Location,[System.Drawing.Point]::Empty,$$b.Size); $$bmp.Save("$(WIN_DIR)/shot.png")'
+	@tailcat ssh $(WIN_ADDR) '$$q=[char]34; Add-Type -Name DPI -Namespace Win -MemberDefinition ("[DllImport(" + $$q + "user32.dll" + $$q + ")] public static extern bool SetProcessDPIAware();"); [Win.DPI]::SetProcessDPIAware() | Out-Null; Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $$bmp=New-Object System.Drawing.Bitmap $$b.Width,$$b.Height; $$g=[System.Drawing.Graphics]::FromImage($$bmp); $$g.CopyFromScreen($$b.Location,[System.Drawing.Point]::Empty,$$b.Size); $$bmp.Save("$(WIN_DIR)/shot.png")'
 	@tailcat cp $(WIN_ADDR):$(WIN_SFTP_DIR)/shot.png shot.png
