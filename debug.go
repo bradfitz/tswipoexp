@@ -142,6 +142,8 @@ func describe(name string, o fyne.CanvasObject, u *UI) widgetInfo {
 	case *widget.RadioGroup:
 		wi.Text = v.Selected
 		wi.Options = v.Options
+	case *copyText:
+		wi.Text = v.value
 	case *widget.Table:
 		wi.Rows = len(u.peers)
 	}
@@ -225,6 +227,8 @@ func (a *App) debugTap(w http.ResponseWriter, r *http.Request) {
 			}
 		case *widget.Check:
 			v.SetChecked(!v.Checked)
+		case *copyText:
+			v.Tapped(nil)
 		default:
 			err = fmt.Errorf("widget %q is a %T, not tappable", name, o)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"image/color"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strings"
@@ -37,6 +38,10 @@ type UI struct {
 	stateLabel       *widget.Label
 	newProfileDialog *dialog.ConfirmDialog
 	ipsLabel         *widget.Label
+	ipv4Copy         *copyText
+	ipv6Copy         *copyText
+	ipSep            *canvas.Text
+	ipsHint          *widget.Label
 	userLabel        *widget.Label
 	hostLabel        *widget.Label
 	proxyLabel       *widget.Label
@@ -116,8 +121,16 @@ func (u *UI) build() {
 
 	u.stateLabel = widget.NewLabel("")
 	u.reg("state", u.stateLabel)
-	u.ipsLabel = widget.NewLabel("")
-	u.reg("ips", u.ipsLabel)
+	u.ipsLabel = widget.NewLabel("Tailscale IPs:")
+	u.ipsHint = widget.NewLabel("")
+	u.ipsHint.TextStyle = fyne.TextStyle{Italic: true}
+	u.ipv4Copy = newCopyText("", u.ipsHint, a.fy.Clipboard())
+	u.ipv6Copy = newCopyText("", u.ipsHint, a.fy.Clipboard())
+	u.ipSep = commaText()
+	u.reg("ipv4", u.ipv4Copy)
+	u.reg("ipv6", u.ipv6Copy)
+	u.reg("ipsHint", u.ipsHint)
+	ipsRow := container.NewHBox(u.ipsLabel, container.NewCenter(u.ipv4Copy), container.NewCenter(u.ipSep), container.NewCenter(u.ipv6Copy), u.ipsHint)
 	u.userLabel = widget.NewLabel("")
 	u.reg("user", u.userLabel)
 	u.hostLabel = widget.NewLabel("")
@@ -301,7 +314,7 @@ func (u *UI) build() {
 		container.NewBorder(nil, nil, widget.NewLabel("Profile:"), nil, u.profileSel),
 		widget.NewSeparator(),
 		container.NewHBox(dotCell, u.stateLabel, u.loginBtn, u.authKeyCell, u.authKeyBtn, u.connectBtn, u.logoutBtn),
-		u.ipsLabel,
+		ipsRow,
 		u.userLabel,
 		container.NewBorder(nil, nil, nil, hostBtn, u.hostLabel),
 		container.NewBorder(nil, nil, nil, peersBtn, u.peersLabel),
@@ -439,7 +452,7 @@ func (u *UI) refresh() {
 	b := a.backend
 	if b == nil {
 		u.setState("No profile loaded", stateColorGray)
-		u.ipsLabel.SetText("")
+		u.setIPs(nil)
 		u.userLabel.SetText("")
 		u.hostLabel.SetText("")
 		u.proxyLabel.SetText("")
@@ -464,11 +477,7 @@ func (u *UI) refresh() {
 		u.setState(stateText(state), stateColorGray)
 	}
 
-	var ips []string
-	for _, ip := range st.TailscaleIPs {
-		ips = append(ips, ip.String())
-	}
-	u.ipsLabel.SetText("Tailscale IPs: " + strings.Join(ips, ", "))
+	u.setIPs(st.TailscaleIPs)
 
 	user := ""
 	if st.Self != nil {
@@ -780,6 +789,25 @@ func (u *UI) showNewProfileDialog() {
 	d.SetOnClosed(func() { u.newProfileDialog = nil })
 	d.Resize(fyne.NewSize(520, 200))
 	d.Show()
+}
+
+// setIPs fills the copyable IP row: up to one IPv4 and one IPv6.
+func (u *UI) setIPs(ips []netip.Addr) {
+	v4, v6 := "", ""
+	for _, ip := range ips {
+		if ip.Is4() && v4 == "" {
+			v4 = ip.String()
+		} else if ip.Is6() && v6 == "" {
+			v6 = ip.String()
+		}
+	}
+	u.ipv4Copy.SetValue(v4)
+	u.ipv6Copy.SetValue(v6)
+	if v4 != "" && v6 != "" {
+		u.ipSep.Show()
+	} else {
+		u.ipSep.Hide()
+	}
 }
 
 // setOutboundLook grays out the proxy line and exit node picker when
