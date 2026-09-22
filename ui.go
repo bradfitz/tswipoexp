@@ -29,29 +29,32 @@ type UI struct {
 	mu      sync.Mutex
 	widgets map[string]fyne.CanvasObject
 
-	profileSel  *widget.Select
-	newProfile  *widget.Entry
-	stateLabel  *widget.Label
-	ipsLabel    *widget.Label
-	userLabel   *widget.Label
-	hostLabel   *widget.Label
-	proxyLabel  *widget.Label
-	errLabel    *widget.Label
-	loginBtn    *widget.Button
-	authKey     *widget.Entry
-	authKeyBtn  *widget.Button
-	logoutBtn   *widget.Button
-	connectBtn  *widget.Button
-	shieldsUp   *widget.Check
-	regProxy    *widget.Check
-	sshCheck    *widget.Check
-	exitNode    *widget.Select
-	exitNodeIDs map[string]tailcfg.StableNodeID // select option label to node
-	hostEntry   *widget.Entry
-	hostBtn     *widget.Button
-	hostSync    *widget.Check
-	peersTable  *widget.Table
-	peersHeader []string
+	profileSel *widget.Select
+	newProfile *widget.Entry
+	stateLabel *widget.Label
+	ipsLabel   *widget.Label
+	userLabel  *widget.Label
+	hostLabel  *widget.Label
+	proxyLabel *widget.Label
+	errLabel   *widget.Label
+	loginBtn   *widget.Button
+	authKey    *widget.Entry
+	authKeyBtn *widget.Button
+	logoutBtn  *widget.Button
+	connectBtn *widget.Button
+	outbound   *widget.Check // registered as the system proxy
+	inbound    *widget.Check // the inverse of Shields Up
+	// outboundDialog and inboundDialog are the open settings dialogs,
+	// or nil.
+	outboundDialog *dialog.ConfirmDialog
+	inboundDialog  *dialog.ConfirmDialog
+	exitNode       *widget.Select
+	exitNodeIDs    map[string]tailcfg.StableNodeID // select option label to node
+	hostEntry      *widget.Entry
+	hostBtn        *widget.Button
+	hostSync       *widget.Check
+	peersTable     *widget.Table
+	peersHeader    []string
 
 	peers []peerRow // rows currently shown in the table
 
@@ -201,30 +204,32 @@ func (u *UI) build() {
 	})
 	u.reg("connect", u.connectBtn)
 
-	u.shieldsUp = widget.NewCheck("Shields up (block incoming connections)", func(on bool) {
+	u.outbound = widget.NewCheck("Outbound access: use this node as the Windows system proxy while running", func(on bool) {
+		a.setOutboundEnabled(on)
+	})
+	u.reg("outbound", u.outbound)
+	outboundBtn := widget.NewButton("Settings...", u.showOutboundSettings)
+	u.reg("outboundSettings", outboundBtn)
+
+	u.inbound = widget.NewCheck("Inbound access: let tailnet peers connect to this node (off = Shields Up)", func(on bool) {
 		b := a.backend
 		if b == nil {
 			return
 		}
+		if prefs := a.prefs(); prefs != nil && prefs.ShieldsUp == !on {
+			return // programmatic update
+		}
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
-			if err := b.SetShieldsUp(ctx, on); err != nil {
+			if err := b.SetShieldsUp(ctx, !on); err != nil {
 				u.showErrAsync(err)
 			}
 		}()
 	})
-	u.reg("shieldsUp", u.shieldsUp)
-
-	u.regProxy = widget.NewCheck("Use as Windows system proxy while running (also sets HTTP_PROXY/HTTPS_PROXY)", func(on bool) {
-		a.setRegisterProxy(on)
-	})
-	u.reg("registerProxy", u.regProxy)
-
-	u.sshCheck = widget.NewCheck("Allow SSH from my other tailnet devices (PowerShell as this Windows user)", func(on bool) {
-		a.setSSH(on)
-	})
-	u.reg("ssh", u.sshCheck)
+	u.reg("inbound", u.inbound)
+	inboundBtn := widget.NewButton("Settings...", u.showInboundSettings)
+	u.reg("inboundSettings", inboundBtn)
 
 	u.exitNodeIDs = map[string]tailcfg.StableNodeID{}
 	u.exitNode = widget.NewSelect([]string{exitNodeNone}, func(label string) {
@@ -303,9 +308,8 @@ func (u *UI) build() {
 		u.errLabel,
 		container.NewHBox(u.loginBtn, u.connectBtn, u.logoutBtn),
 		container.NewBorder(nil, nil, nil, u.authKeyBtn, u.authKey),
-		u.shieldsUp,
-		u.regProxy,
-		u.sshCheck,
+		container.NewBorder(nil, nil, nil, outboundBtn, u.outbound),
+		container.NewBorder(nil, nil, nil, inboundBtn, u.inbound),
 		container.NewBorder(nil, nil, widget.NewLabel("Exit node:"), nil, u.exitNode),
 		container.NewBorder(nil, nil, widget.NewLabel("Hostname:"), container.NewHBox(u.hostBtn, u.hostSync), u.hostEntry),
 		widget.NewSeparator(),
@@ -497,17 +501,17 @@ func (u *UI) refresh() {
 	if pa := b.ProxyAddr(); pa != "" {
 		reg := "not registered with Windows"
 		if b.ProxyRegistered() {
-			reg = "registered as the Windows system proxy"
+			if cfg.proxyMode() == proxyModeStatic {
+				reg = "registered as the Windows system proxy (fixed, all traffic)"
+			} else if pacInputsFrom(st, cfg, pa).AllTraffic {
+				reg = "registered as the Windows system proxy (PAC, all traffic)"
+			} else {
+				reg = "registered as the Windows system proxy (PAC, tailnet only)"
+			}
 		}
 		u.proxyLabel.SetText(fmt.Sprintf("Proxy (SOCKS5 + HTTP): %s, %s", pa, reg))
 	} else {
 		u.proxyLabel.SetText("Proxy: not running")
-	}
-	if u.regProxy.Checked != cfg.registerProxy() {
-		u.regProxy.SetChecked(cfg.registerProxy())
-	}
-	if u.sshCheck.Checked != cfg.SSH {
-		u.sshCheck.SetChecked(cfg.SSH)
 	}
 	u.errLabel.SetText(b.LastErr())
 
@@ -538,8 +542,11 @@ func (u *UI) refresh() {
 	}
 
 	prefs := a.prefs()
-	if prefs != nil && u.shieldsUp.Checked != prefs.ShieldsUp {
-		u.shieldsUp.SetChecked(prefs.ShieldsUp)
+	if prefs != nil && u.inbound.Checked != !prefs.ShieldsUp {
+		u.inbound.SetChecked(!prefs.ShieldsUp)
+	}
+	if u.outbound.Checked != cfg.registerProxy() {
+		u.outbound.SetChecked(cfg.registerProxy())
 	}
 	u.refreshExitNodes(st, prefs)
 

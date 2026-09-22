@@ -47,6 +47,7 @@ type Backend struct {
 	cancel context.CancelFunc
 
 	mu       sync.Mutex
+	lastPAC  string // fingerprint of the last PAC inputs, to detect changes
 	status   *ipnstate.Status
 	authURL  string // most recent BrowseToURL from the IPN bus
 	lastErr  string // most recent error worth showing the user
@@ -98,11 +99,28 @@ func (b *Backend) Start(authKey string) error {
 	if err := b.startProxy(); err != nil {
 		b.setErr("proxy: %v", err)
 	} else if b.cfg.registerProxy() {
-		if err := registerSystemProxy(b.ProxyAddr(), b.logf); err != nil {
+		if err := registerSystemProxy(b.cfg.outboundOptions(b.ProxyAddr()), b.logf); err != nil {
 			b.setErr("registering proxy with Windows: %v", err)
 		}
 	}
 	return nil
+}
+
+// ApplyOutbound applies changed outbound access settings from the
+// config: it restores the user's original settings and registers
+// again with the new options, or just restores if registration is
+// now off. The caller has already updated b.cfg.
+func (b *Backend) ApplyOutbound() error {
+	if b.ProxyAddr() == "" {
+		return nil
+	}
+	if err := unregisterSystemProxy(b.logf); err != nil {
+		return err
+	}
+	if !b.cfg.registerProxy() {
+		return nil
+	}
+	return registerSystemProxy(b.cfg.outboundOptions(b.ProxyAddr()), b.logf)
 }
 
 // startSSH listens for SSH on the node's tailnet addresses.
@@ -167,19 +185,6 @@ func (b *Backend) SSHRunning() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.sshSrv != nil
-}
-
-// SetRegisterProxy turns registration of the proxy with the user's
-// Windows session on or off and applies it immediately.
-func (b *Backend) SetRegisterProxy(on bool) error {
-	b.cfg.RegisterProxy = &on
-	if b.ProxyAddr() == "" {
-		return nil
-	}
-	if on {
-		return registerSystemProxy(b.ProxyAddr(), b.logf)
-	}
-	return unregisterSystemProxy(b.logf)
 }
 
 // ProxyRegistered reports whether the user's Windows proxy settings
@@ -363,7 +368,19 @@ func (b *Backend) refreshStatus() {
 	if st.BackendState == ipn.Running.String() {
 		b.authURL = ""
 	}
+	pacChanged := false
+	if b.proxyLn != nil {
+		in := pacInputsFrom(st, b.cfg, b.ProxyAddr())
+		key := fmt.Sprintf("%v", in)
+		pacChanged = b.lastPAC != "" && key != b.lastPAC
+		b.lastPAC = key
+	}
 	b.mu.Unlock()
+	if pacChanged && b.cfg.registerProxy() && b.cfg.proxyMode() == proxyModePAC {
+		// Browsers cache the script; tell WinINet settings changed
+		// so they fetch it again.
+		notifyProxySettingsChanged()
+	}
 	b.changed()
 }
 
@@ -455,7 +472,7 @@ func (b *Backend) startProxy() error {
 		}
 	}()
 	hs := &http.Server{
-		Handler:  httpProxyHandler(b.dial),
+		Handler:  httpProxyHandler(b.dial, b.pac),
 		ErrorLog: log.New(logger.FuncWriter(logger.WithPrefix(b.logf, "httpproxy: ")), "", 0),
 	}
 	go func() {
@@ -466,6 +483,11 @@ func (b *Backend) startProxy() error {
 	}()
 	b.logf("proxy listening on %v (SOCKS5 and HTTP)", ln.Addr())
 	return nil
+}
+
+// pac returns the current proxy auto-config script.
+func (b *Backend) pac() string {
+	return pacScript(pacInputsFrom(b.Status(), b.cfg, b.ProxyAddr()))
 }
 
 // dial is the proxy's dialer. While the node is Running everything

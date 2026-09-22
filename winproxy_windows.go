@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"unsafe"
 
@@ -74,10 +76,11 @@ type perConnOptionList struct {
 const proxyBypassList = "localhost;127.*;[::1]"
 
 // registerSystemProxy points the current user's WinINet proxy
-// settings and proxy environment variables at addr (a host:port),
-// saving the previous values first. Calling it while already
-// registered is fine: the original saved values are kept.
-func registerSystemProxy(addr string, logf func(string, ...any)) error {
+// settings (and optionally proxy environment variables) at the proxy
+// described by reg, saving the previous values first and installing
+// the requested safety nets. Calling it while already registered is
+// fine: the original saved values are kept.
+func registerSystemProxy(reg proxyRegistration, logf func(string, ...any)) error {
 	prev, err := loadSavedProxySettings()
 	if err != nil {
 		logf("winproxy: reading restore file: %v", err)
@@ -98,35 +101,67 @@ func registerSystemProxy(addr string, logf func(string, ...any)) error {
 		if err := prev.save(); err != nil {
 			return fmt.Errorf("saving proxy restore file: %w", err)
 		}
-		if err := installCrashRestore(prev); err != nil {
-			// Not fatal: the in-process restore still works for a
-			// clean exit. But say so, since it's the safety net.
-			logf("winproxy: installing crash restore: %v", err)
+	}
+	// The safety nets go in before the settings change, so there is
+	// no moment where the proxy is set and nothing can undo it.
+	if err := writeCrashRestoreFiles(prev); err != nil {
+		logf("winproxy: writing restore script: %v", err)
+	}
+	if reg.RunOnce {
+		if err := installRunOnce(); err != nil {
+			logf("winproxy: installing RunOnce restore: %v", err)
 		}
+	} else if err := removeRunOnce(); err != nil {
+		logf("winproxy: removing RunOnce restore: %v", err)
+	}
+	if reg.Watchdog {
+		if err := startWatchdog(logf); err != nil {
+			logf("winproxy: starting watchdog: %v", err)
+		}
+	} else {
+		stopWatchdog(logf)
 	}
 
-	// Both http and https go to our HTTP proxy; https uses CONNECT.
-	// The socks= rule is deliberately omitted because Chromium reads
-	// it as SOCKS4, which our server doesn't speak.
-	//
-	// The bypass list names loopback explicitly rather than using
-	// "<local>", because "<local>" means every hostname without a
-	// dot, which would send short MagicDNS names like "myserver"
-	// around the proxy and break them.
-	err = setPerConnProxy(proxyTypeDirect|proxyTypeProxy, fmt.Sprintf("http=%s;https=%s", addr, addr), proxyBypassList, "")
+	switch reg.Mode {
+	case proxyModeStatic:
+		// Both http and https go to our HTTP proxy; https uses
+		// CONNECT. The socks= rule is deliberately omitted because
+		// Chromium reads it as SOCKS4, which our server doesn't
+		// speak. The bypass list names loopback explicitly rather
+		// than using "<local>", because "<local>" means every
+		// hostname without a dot, which would send short MagicDNS
+		// names like "myserver" around the proxy and break them.
+		err = setPerConnProxy(proxyTypeDirect|proxyTypeProxy, fmt.Sprintf("http=%s;https=%s", reg.Addr, reg.Addr), proxyBypassList, "")
+	default:
+		// PAC: WinINet, WinHTTP, and Chromium all fall back to
+		// direct when the script can't be fetched, so a dead
+		// tswipoexp means no proxy without any cleanup.
+		err = setPerConnProxy(proxyTypeDirect|proxyTypeAutoProxyURL, "", "", reg.PACURL)
+	}
 	if err != nil {
 		return fmt.Errorf("InternetSetOption: %w", err)
 	}
 
-	url := "http://" + addr
-	if err := setUserEnv(map[string]string{
-		"HTTP_PROXY":  url,
-		"HTTPS_PROXY": url,
-		"NO_PROXY":    "localhost,127.0.0.1,::1",
-	}); err != nil {
+	if reg.EnvVars {
+		url := "http://" + reg.Addr
+		err = setUserEnv(map[string]string{
+			"HTTP_PROXY":  url,
+			"HTTPS_PROXY": url,
+			"NO_PROXY":    "localhost,127.0.0.1,::1",
+		})
+	} else {
+		// Put back whatever the user had, in case a previous
+		// registration set them.
+		env := map[string]string{}
+		for _, name := range proxyEnvVars {
+			env[name] = prev.Env[name]
+		}
+		err = setUserEnv(env)
+	}
+	if err != nil {
 		logf("winproxy: setting environment: %v", err)
 	}
-	logf("winproxy: registered %s as the user's HTTP/HTTPS proxy", addr)
+	logf("winproxy: registered %s as the user's proxy (mode %s, env %v, watchdog %v, runonce %v)", reg.Addr, reg.Mode, reg.EnvVars, reg.Watchdog, reg.RunOnce)
 	return nil
 }
 
@@ -138,8 +173,10 @@ func unregisterSystemProxy(logf func(string, ...any)) error {
 		return err
 	}
 	if prev == nil || !prev.isThisMachine() {
+		stopWatchdog(logf)
 		return nil
 	}
+	stopWatchdog(logf)
 	if err := prev.restore(); err != nil {
 		return err
 	}
@@ -160,60 +197,6 @@ const (
 	crashRestoreReg  = "restore-proxy.reg"
 	connectionsKey   = `Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections`
 )
-
-// installCrashRestore writes the restore .reg and .cmd next to the
-// restore JSON and registers the .cmd to run once at the user's next
-// logon, so an unclean exit still gets the proxy settings put back.
-func installCrashRestore(prev *savedProxySettings) error {
-	restorePath, err := proxyRestorePath()
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(restorePath)
-
-	var blob []byte
-	if k, err := registry.OpenKey(registry.CURRENT_USER, connectionsKey, registry.QUERY_VALUE); err == nil {
-		blob, _, _ = k.GetBinaryValue("DefaultConnectionSettings")
-		k.Close()
-	}
-	regPath := filepath.Join(dir, crashRestoreReg)
-	if err := writeFileAtomic(regPath, []byte(restoreRegFile(prev, blob))); err != nil {
-		return err
-	}
-	cmdPath := filepath.Join(dir, crashRestoreCmd)
-	if err := writeFileAtomic(cmdPath, []byte(restoreCmdFile(crashRestoreReg))); err != nil {
-		return err
-	}
-	k, _, err := registry.CreateKey(registry.CURRENT_USER, runOnceKey, registry.SET_VALUE)
-	if err != nil {
-		return err
-	}
-	defer k.Close()
-	return k.SetStringValue(runOnceValueName, fmt.Sprintf(`cmd.exe /c "%s"`, cmdPath))
-}
-
-// removeCrashRestore deletes the RunOnce entry and its files after a
-// clean restore.
-func removeCrashRestore() error {
-	if k, err := registry.OpenKey(registry.CURRENT_USER, runOnceKey, registry.SET_VALUE); err == nil {
-		if err := k.DeleteValue(runOnceValueName); err != nil && !errors.Is(err, registry.ErrNotExist) {
-			k.Close()
-			return err
-		}
-		k.Close()
-	}
-	restorePath, err := proxyRestorePath()
-	if err != nil {
-		return err
-	}
-	dir := filepath.Dir(restorePath)
-	for _, name := range []string{crashRestoreCmd, crashRestoreReg} {
-		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
-	return nil
-}
 
 func (s *savedProxySettings) isThisMachine() bool {
 	m, u := machineAndUser()
@@ -269,6 +252,163 @@ func (s *savedProxySettings) restore() error {
 	return setUserEnv(env)
 }
 
+// crashRestoreDir returns the machine-local directory holding the
+// restore files.
+func crashRestoreDir() (string, error) {
+	p, err := proxyRestorePath()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(p), nil
+}
+
+// writeCrashRestoreFiles writes the restore .reg and .cmd next to
+// the restore JSON. Both the RunOnce entry and the watchdog run the
+// .cmd.
+func writeCrashRestoreFiles(prev *savedProxySettings) error {
+	dir, err := crashRestoreDir()
+	if err != nil {
+		return err
+	}
+	var blob []byte
+	if k, err := registry.OpenKey(registry.CURRENT_USER, connectionsKey, registry.QUERY_VALUE); err == nil {
+		blob, _, _ = k.GetBinaryValue("DefaultConnectionSettings")
+		k.Close()
+	}
+	if err := writeFileAtomic(filepath.Join(dir, crashRestoreReg), []byte(restoreRegFile(prev, blob))); err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(dir, crashRestoreCmd), []byte(restoreCmdFile(crashRestoreReg)))
+}
+
+// installRunOnce registers the restore .cmd to run once at the
+// user's next logon, and flushes the key so a power cut right after
+// doesn't lose it.
+func installRunOnce() error {
+	dir, err := crashRestoreDir()
+	if err != nil {
+		return err
+	}
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, runOnceKey, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	if err := k.SetStringValue(runOnceValueName, fmt.Sprintf(`cmd.exe /c "%s"`, filepath.Join(dir, crashRestoreCmd))); err != nil {
+		return err
+	}
+	return regFlushKey(windows.Handle(k))
+}
+
+var procRegFlushKey = windows.NewLazySystemDLL("advapi32.dll").NewProc("RegFlushKey")
+
+// regFlushKey writes a key's pending changes to disk now rather than
+// at the registry's leisure.
+func regFlushKey(h windows.Handle) error {
+	r, _, _ := procRegFlushKey.Call(uintptr(h))
+	if r != 0 {
+		return syscall.Errno(r)
+	}
+	return nil
+}
+
+// removeRunOnce deletes the RunOnce entry if present.
+func removeRunOnce() error {
+	k, err := registry.OpenKey(registry.CURRENT_USER, runOnceKey, registry.SET_VALUE)
+	if err != nil {
+		if errors.Is(err, registry.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	defer k.Close()
+	if err := k.DeleteValue(runOnceValueName); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// removeCrashRestore deletes the RunOnce entry and the restore files
+// after a clean restore.
+func removeCrashRestore() error {
+	if err := removeRunOnce(); err != nil {
+		return err
+	}
+	dir, err := crashRestoreDir()
+	if err != nil {
+		return err
+	}
+	for _, name := range []string{crashRestoreCmd, crashRestoreReg} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+// The watchdog is a hidden Windows PowerShell process that waits for
+// this process to exit and then runs the restore .cmd. PowerShell is
+// used because it's on every Windows install and lives on the system
+// drive, so it keeps working after the USB stick is pulled, and it
+// costs no extra binary. It's killed before a clean restore so the
+// two don't race (the .cmd it would run is deleted anyway).
+var (
+	watchdogMu  sync.Mutex
+	watchdogCmd *exec.Cmd
+)
+
+func startWatchdog(logf func(string, ...any)) error {
+	watchdogMu.Lock()
+	defer watchdogMu.Unlock()
+	if watchdogCmd != nil && watchdogCmd.ProcessState == nil {
+		return nil // already running
+	}
+	dir, err := crashRestoreDir()
+	if err != nil {
+		return err
+	}
+	cmdPath := filepath.Join(dir, crashRestoreCmd)
+	ps := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+	// If our process can't be found the script exits without
+	// restoring: better to leave a stale proxy for RunOnce than to
+	// clobber a live registration because of a PID mixup.
+	script := fmt.Sprintf(`$p = Get-Process -Id %d -ErrorAction Stop; $p.WaitForExit(); if (Test-Path '%s') { & cmd.exe /c '%s' }`, os.Getpid(), cmdPath, cmdPath)
+	c := exec.Command(ps, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	// CREATE_NO_WINDOW gives the console host a console with no
+	// window. DETACHED_PROCESS (no console at all) made PowerShell
+	// exit immediately.
+	c.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
+	}
+	if logFile, err := os.OpenFile(filepath.Join(dir, "watchdog.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600); err == nil {
+		c.Stdout = logFile
+		c.Stderr = logFile
+		defer logFile.Close() // the child holds its own handle
+	}
+	if err := c.Start(); err != nil {
+		return err
+	}
+	go c.Wait() // reap; ProcessState set on exit
+	watchdogCmd = c
+	logf("winproxy: watchdog started (pid %d)", c.Process.Pid)
+	return nil
+}
+
+func stopWatchdog(logf func(string, ...any)) {
+	watchdogMu.Lock()
+	defer watchdogMu.Unlock()
+	if watchdogCmd == nil {
+		return
+	}
+	if watchdogCmd.ProcessState == nil {
+		if err := watchdogCmd.Process.Kill(); err != nil {
+			logf("winproxy: stopping watchdog: %v", err)
+		}
+	}
+	watchdogCmd = nil
+}
+
 // setPerConnProxy applies proxy settings to the default connection
 // and tells WinINet, and everything watching it, that they changed.
 // Empty strings clear the corresponding setting.
@@ -305,6 +445,13 @@ func setPerConnProxy(flags uint32, server, bypass, pac string) error {
 	procInternetSetOpt.Call(0, internetOptionSettingsChanged, 0, 0)
 	procInternetSetOpt.Call(0, internetOptionRefresh, 0, 0)
 	return nil
+}
+
+// notifyProxySettingsChanged tells WinINet, and everything watching
+// it, that proxy settings changed, so PAC consumers refetch.
+func notifyProxySettingsChanged() {
+	procInternetSetOpt.Call(0, internetOptionSettingsChanged, 0, 0)
+	procInternetSetOpt.Call(0, internetOptionRefresh, 0, 0)
 }
 
 // queryPerConnProxy reads the default connection's proxy settings.
@@ -369,12 +516,15 @@ func setUserEnv(vars map[string]string) error {
 	return nil
 }
 
-// systemProxyIsOurs reports whether the user's proxy is currently
-// pointed at addr.
+// systemProxyIsOurs reports whether the user's proxy settings
+// currently point at our proxy at addr, in either mode.
 func systemProxyIsOurs(addr string) bool {
-	flags, server, _, _, err := queryPerConnProxy()
+	flags, server, _, pac, err := queryPerConnProxy()
 	if err != nil {
 		return false
 	}
-	return flags&proxyTypeProxy != 0 && strings.Contains(server, addr)
+	if flags&proxyTypeProxy != 0 && strings.Contains(server, addr) {
+		return true
+	}
+	return flags&proxyTypeAutoProxyURL != 0 && strings.Contains(pac, addr)
 }

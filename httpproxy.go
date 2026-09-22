@@ -10,10 +10,11 @@ import (
 )
 
 // httpProxyHandler returns an HTTP proxy handler (plain proxying and
-// CONNECT tunneling) that dials through the given dialer. It's
-// adapted from cmd/tailscaled/proxy.go in the tailscale repo, which
-// isn't importable.
-func httpProxyHandler(dialer func(ctx context.Context, netw, addr string) (net.Conn, error)) http.Handler {
+// CONNECT tunneling) that dials through the given dialer, and serves
+// the proxy auto-config script from pac at pacPath. It's adapted from
+// cmd/tailscaled/proxy.go in the tailscale repo, which isn't
+// importable.
+func httpProxyHandler(dialer func(ctx context.Context, netw, addr string) (net.Conn, error), pac func() string) http.Handler {
 	rp := &httputil.ReverseProxy{
 		Director: func(r *http.Request) {}, // no change
 		Transport: &http.Transport{
@@ -23,6 +24,12 @@ func httpProxyHandler(dialer func(ctx context.Context, netw, addr string) (net.C
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "CONNECT" {
 			backURL := r.RequestURI
+			if backURL == pacPath && pac != nil {
+				w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
+				w.Header().Set("Cache-Control", "no-cache, no-store")
+				io.WriteString(w, pac())
+				return
+			}
 			if strings.HasPrefix(backURL, "/") || backURL == "*" {
 				http.Error(w, "bogus RequestURI; must be absolute URL or CONNECT", 400)
 				return

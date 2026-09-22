@@ -201,23 +201,45 @@ func (a *App) switchProfile(name string) {
 	}()
 }
 
-// setRegisterProxy toggles system proxy registration for the current
-// profile and saves the choice.
-func (a *App) setRegisterProxy(on bool) {
+// setOutboundEnabled turns registration as the system proxy on or
+// off for the current profile.
+func (a *App) setOutboundEnabled(on bool) {
 	a.mu.Lock()
 	b := a.backend
 	a.mu.Unlock()
 	if b == nil || b.Config().registerProxy() == on {
-		// Programmatic checkbox updates fire the callback too.
+		return // programmatic checkbox update
+	}
+	cfg := *b.Config()
+	cfg.RegisterProxy = &on
+	a.applyOutbound(cfg, false)
+}
+
+// applyOutbound saves new outbound access settings for the current
+// profile and applies them. If the proxy address changed the profile
+// is restarted, since the listener can't move while running.
+func (a *App) applyOutbound(cfg Config, addrChanged bool) {
+	a.mu.Lock()
+	b := a.backend
+	a.mu.Unlock()
+	if b == nil {
 		return
 	}
-	if err := b.SetRegisterProxy(on); err != nil {
+	*b.Config() = cfg
+	if err := a.profiles.SaveConfig(b.Profile(), &cfg); err != nil {
 		a.ui.showErr(err)
+		return
 	}
-	if err := a.profiles.SaveConfig(b.Profile(), b.Config()); err != nil {
-		a.ui.showErr(err)
+	if addrChanged {
+		a.switchProfile(b.Profile())
+		return
 	}
-	a.ui.scheduleRefresh()
+	go func() {
+		if err := b.ApplyOutbound(); err != nil {
+			a.ui.showErrAsync(err)
+		}
+		a.ui.scheduleRefresh()
+	}()
 }
 
 // setSSH toggles the SSH server for the current profile and saves

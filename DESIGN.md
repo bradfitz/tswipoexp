@@ -171,44 +171,78 @@ fails to create it and exits after showing a message box (the GUI
 binary has no console). The lock is taken before any profile
 directory is touched.
 
+### Outbound and inbound access
+
+The main window has two top-level checkboxes, each with a Settings
+button opening a per-profile dialog:
+
+* Outbound access: while checked and the profile is running,
+  tswipoexp registers itself as the current Windows user's proxy.
+  The dialog holds how and with which safety nets (below).
+* Inbound access: the inverse of Shields Up. Unchecked blocks all
+  incoming connections. The dialog holds what the node offers to
+  peers when allowed; today that's the SSH server.
+
 ### Registering the proxy with Windows
 
-While a profile is running and its RegisterProxy setting is on (the
-default), tswipoexp makes itself the current user's proxy:
+All of these are per-profile settings in tswipoexp.json, chosen in
+the Outbound access settings dialog:
 
-* WinINet per-connection settings via InternetSetOption with
-  INTERNET_OPTION_PER_CONNECTION_OPTION: flags DIRECT|PROXY, server
-  "http=ADDR;https=ADDR", bypass "localhost;127.*;[::1]". The usual
-  "<local>" bypass is not used because it means "any hostname without
-  a dot", which would route short MagicDNS names around the proxy
-  (this bit us: Edge got ERR_NAME_NOT_RESOLVED for short names while
-  FQDNs worked). Writing the legacy
-  ProxyEnable/ProxyServer registry values is not enough: WinHTTP
-  users (.NET, PowerShell) and Chromium browsers read the
-  per-connection blob, and Edge failed with ERR_NAME_NOT_RESOLVED
-  until this was switched. No socks= rule, since Chromium treats it
-  as SOCKS4.
-* Per-user environment variables HTTP_PROXY, HTTPS_PROXY, and
+* Mode "pac" (default): AutoConfigURL points at
+  http://ADDR/proxy.pac, served by the proxy's HTTP side. The script
+  sends tailnet destinations (100.64.0.0/10, fd7a:115c:a1e0::/48, the
+  MagicDNS suffix, dotless names, peers' advertised IPv4 subnet
+  routes) through the proxy and everything else direct, never
+  resolving hostnames itself. With an exit node selected, or with the
+  "route all traffic" option, everything goes through the proxy.
+  WinINet, WinHTTP, and Chromium fall back to direct when the script
+  can't be fetched, so a dead tswipoexp means no proxy with no
+  cleanup needed. When the script's inputs change (exit node, suffix,
+  routes) WinINet is told settings changed so browsers refetch.
+* Mode "static": WinINet per-connection settings via InternetSetOption
+  with INTERNET_OPTION_PER_CONNECTION_OPTION: flags DIRECT|PROXY,
+  server "http=ADDR;https=ADDR", bypass "localhost;127.*;[::1]". The
+  usual "<local>" bypass is not used because it means "any hostname
+  without a dot", which would route short MagicDNS names around the
+  proxy (this bit us: Edge got ERR_NAME_NOT_RESOLVED for short names
+  while FQDNs worked). Writing the legacy ProxyEnable/ProxyServer
+  registry values is not enough: WinHTTP users (.NET, PowerShell) and
+  Chromium browsers read the per-connection blob. No socks= rule,
+  since Chromium treats it as SOCKS4.
+* Environment variables (default on): HTTP_PROXY, HTTPS_PROXY, and
   NO_PROXY in HKCU\Environment plus a WM_SETTINGCHANGE broadcast, so
-  newly launched command line tools pick them up.
+  newly launched command line tools pick them up. These can't be made
+  conditional the way PAC is, hence the safety nets.
+* Proxy listen address (default 127.0.0.1:1055); changing it restarts
+  the profile.
 
-The previous settings are saved to %LOCALAPPDATA%\tswipoexp\
-proxy-restore.json and restored at exit, or at the next start on the
-same machine if the previous run died. Alongside it, tswipoexp writes
-restore-proxy.reg (the previous WinINet values, connection blob, and
-environment variables) and restore-proxy.cmd (reg import plus self
-delete), and points a per-user RunOnce entry at the .cmd. If the app
-dies or the machine reboots with it running, Windows restores the
-proxy at the user's next logon with nothing needed from the stick. A
-clean exit removes the entry and files. These are the deliberate
-pieces of state kept off the stick: they describe this machine, not
-the profile. This was added after Windows Update rebooted the test
-laptop while tswipoexp was running and left its proxy pointing at a
-dead port until the next morning.
+Safety nets, layered because they cover different failure shapes:
+
+* Every start: if %LOCALAPPDATA%\tswipoexp\proxy-restore.json exists
+  for this machine and user, restore it. Heals a crash the next time
+  tswipoexp runs here.
+* Watchdog (default on): a hidden Windows PowerShell process started
+  before the proxy change, running Wait-Process on our PID and then
+  the restore .cmd. Heals a crash, a kill, or a pulled stick within
+  seconds, env vars included, from the system drive. Killed before a
+  clean restore.
+* RunOnce (default on): restore-proxy.reg (previous WinINet values,
+  connection blob, env vars) and restore-proxy.cmd (reg import, then
+  self delete) in the same directory, with a per-user RunOnce entry
+  pointing at the .cmd, key flushed with RegFlushKey. Heals a power
+  cut or an update reboot at the user's next logon with nothing
+  needed from the stick. Added after Windows Update rebooted the test
+  laptop with tswipoexp running and left its proxy pointing at a dead
+  port until the next morning.
+* Files are written with fsync before rename so a power cut can't
+  leave a torn restore script.
+
+The restore files are the deliberate pieces of state kept off the
+stick: they describe this machine, not the profile.
 
 While the node is not Running, the proxy dials directly instead of
-failing, so the user's browsing keeps working with the proxy still
-registered; only tailnet names fail.
+failing, so browsing keeps working with the proxy still registered;
+only tailnet names fail.
 
 ### Tray icon and window state
 
@@ -283,20 +317,11 @@ testing this from Linux.
   exposed by tsnet today), or add an allowlist of users/tags in the
   profile config.
 
-* Should logtail uploads be disabled for a portable client?
 * Windows Firewall: I expected a prompt when tsnet first bound UDP,
   but none appeared on the test laptop and direct connections worked
   both ways. Worth checking on a machine with stricter firewall
   settings before deciding whether the GUI needs a warning.
-* Pulling the stick while running leaves the machine's proxy pointed
-  at a dead port until the user's next logon, when the RunOnce
-  restore runs. The gap until then could be closed with a PAC URL
-  served by the proxy, which browsers ignore when unreachable, or a
-  tiny watchdog process.
-* PAC versus static proxy: a PAC file could send only tailnet
-  destinations through the proxy and leave the rest alone. Static was
-  chosen for now because it's simpler and gives exit node semantics
-  for free.
+* Logtail uploads: Brad decided to leave this alone for now.
 * Testing the browser path on the laptop uses headless Edge via
   tools/edge-dump.cmd; Edge produces no output when run directly from
   PowerShell.

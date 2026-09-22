@@ -51,8 +51,35 @@ type Config struct {
 	ProxyAddr string `json:",omitempty"`
 
 	// RegisterProxy, if non-nil and false, disables registering the
-	// proxy with the Windows user session. It defaults to on.
+	// proxy with the Windows user session. It defaults to on. The
+	// remaining outbound settings only matter when it's on.
 	RegisterProxy *bool `json:",omitempty"`
+
+	// ProxyMode is how the system proxy is registered: "pac" (the
+	// default) points Windows at an auto-config script served by the
+	// proxy, which sends only tailnet traffic through the proxy and
+	// which apps ignore when tswipoexp isn't running; "static" sets a
+	// fixed proxy for all traffic.
+	ProxyMode string `json:",omitempty"`
+
+	// PACAllTraffic, in PAC mode, routes all traffic through the
+	// proxy rather than only tailnet destinations. Selecting an exit
+	// node does this regardless.
+	PACAllTraffic bool `json:",omitempty"`
+
+	// SetEnvVars, if non-nil and false, skips setting the per-user
+	// HTTP_PROXY, HTTPS_PROXY, and NO_PROXY variables. Defaults to on.
+	SetEnvVars *bool `json:",omitempty"`
+
+	// Watchdog, if non-nil and false, skips starting the watchdog
+	// process that restores the settings when tswipoexp dies.
+	// Defaults to on.
+	Watchdog *bool `json:",omitempty"`
+
+	// RunOnceRestore, if non-nil and false, skips registering the
+	// RunOnce entry that restores the settings at the next logon.
+	// Defaults to on.
+	RunOnceRestore *bool `json:",omitempty"`
 
 	// SSH, if true, runs an SSH server on the tailnet that gives
 	// peers owned by the same tailnet user a shell as the current
@@ -79,8 +106,42 @@ func (c *Config) proxyAddr() string {
 	return defaultProxyAddr
 }
 
-func (c *Config) registerProxy() bool {
-	return c.RegisterProxy == nil || *c.RegisterProxy
+func (c *Config) registerProxy() bool  { return boolOr(c.RegisterProxy, true) }
+func (c *Config) setEnvVars() bool     { return boolOr(c.SetEnvVars, true) }
+func (c *Config) watchdog() bool       { return boolOr(c.Watchdog, true) }
+func (c *Config) runOnceRestore() bool { return boolOr(c.RunOnceRestore, true) }
+
+// ProxyMode values.
+const (
+	proxyModePAC    = "pac"
+	proxyModeStatic = "static"
+)
+
+func (c *Config) proxyMode() string {
+	if c.ProxyMode == proxyModeStatic {
+		return proxyModeStatic
+	}
+	return proxyModePAC
+}
+
+func boolOr(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+	return *p
+}
+
+// outboundOptions returns the proxy registration options implied by
+// the config for a proxy listening on addr.
+func (c *Config) outboundOptions(addr string) proxyRegistration {
+	return proxyRegistration{
+		Addr:     addr,
+		Mode:     c.proxyMode(),
+		PACURL:   "http://" + addr + pacPath,
+		EnvVars:  c.setEnvVars(),
+		Watchdog: c.watchdog(),
+		RunOnce:  c.runOnceRestore(),
+	}
 }
 
 // Profiles manages the state directory and the profiles within it.
@@ -212,11 +273,27 @@ func (p *Profiles) SaveConfig(name string, c *Config) error {
 	return writeFileAtomic(filepath.Join(p.Dir(name), configFileName), append(b, '\n'))
 }
 
-// writeFileAtomic writes data to path via a temp file and rename so a
-// yanked USB stick leaves either the old or the new contents.
+// writeFileAtomic writes data to path via a temp file, fsync, and
+// rename so a yanked USB stick or a power cut leaves either the old
+// or the new contents, never a torn file.
 func writeFileAtomic(path string, data []byte) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {

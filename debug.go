@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -138,6 +139,9 @@ func describe(name string, o fyne.CanvasObject, u *UI) widgetInfo {
 		wi.Text = v.Text
 		c := v.Checked
 		wi.Checked = &c
+	case *widget.RadioGroup:
+		wi.Text = v.Selected
+		wi.Options = v.Options
 	case *widget.Table:
 		wi.Rows = len(u.peers)
 	}
@@ -170,6 +174,35 @@ func (a *App) lookupWidget(name string) (fyne.CanvasObject, bool) {
 // debugTap taps the named button, or toggles the named check.
 func (a *App) debugTap(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("name")
+	if prefix, action, ok := strings.Cut(name, "."); ok && (action == "save" || action == "cancel") {
+		// The settings dialogs aren't canvas objects; drive them
+		// directly.
+		var err error
+		fyne.DoAndWait(func() {
+			var d *dialog.ConfirmDialog
+			switch prefix {
+			case "outbound":
+				d = a.ui.outboundDialog
+			case "inbound":
+				d = a.ui.inboundDialog
+			}
+			if d == nil {
+				err = fmt.Errorf("%s settings dialog is not open", prefix)
+				return
+			}
+			if action == "save" {
+				d.Confirm()
+			} else {
+				d.Hide()
+			}
+		})
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		fmt.Fprintf(w, "tapped %s\n", name)
+		return
+	}
 	o, ok := a.lookupWidget(name)
 	if !ok {
 		http.Error(w, "no widget named "+name, 404)
@@ -214,6 +247,15 @@ func (a *App) debugSet(w http.ResponseWriter, r *http.Request) {
 		switch v := o.(type) {
 		case *widget.Entry:
 			v.SetText(text)
+		case *widget.RadioGroup:
+			// Accept an option index or a prefix of the label.
+			for i, opt := range v.Options {
+				if text == fmt.Sprint(i) || strings.HasPrefix(opt, text) {
+					v.SetSelected(opt)
+					return
+				}
+			}
+			err = fmt.Errorf("no option matching %q", text)
 		case *widget.Select:
 			v.SetSelected(text)
 		case *widget.Check:

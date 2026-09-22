@@ -16,6 +16,20 @@ const (
 	proxyTypeAutoDetect   = 0x8
 )
 
+// proxyRegistration describes how to register the proxy with the
+// user's Windows session. It's derived from the profile Config.
+type proxyRegistration struct {
+	Addr     string // proxy host:port
+	Mode     string // proxyModePAC or proxyModeStatic
+	PACURL   string // URL of the PAC script, for PAC mode
+	EnvVars  bool   // also set HTTP_PROXY and friends
+	Watchdog bool   // start a watchdog that restores on death
+	RunOnce  bool   // register a RunOnce entry that restores at logon
+}
+
+// pacPath is where the proxy's HTTP side serves the PAC script.
+const pacPath = "/proxy.pac"
+
 // proxyEnvVars are the per-user environment variables set to point
 // at the proxy. Many command line tools honor these where they don't
 // honor WinINet settings.
