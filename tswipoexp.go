@@ -67,6 +67,13 @@ func main() {
 	}
 	defer bridge.Close()
 
+	// If a previous run died with the proxy registered (crash, or
+	// the USB stick was pulled), put the user's settings back
+	// before doing anything else.
+	if err := unregisterSystemProxy(logf); err != nil {
+		logf("restoring proxy settings from a previous run: %v", err)
+	}
+
 	a := &App{
 		fy:       app.NewWithID("com.github.bradfitz.tswipoexp"),
 		profiles: profiles,
@@ -185,6 +192,24 @@ func (a *App) switchProfile(name string) {
 			a.ui.refresh()
 		})
 	}()
+}
+
+// setRegisterProxy toggles system proxy registration for the current
+// profile and saves the choice.
+func (a *App) setRegisterProxy(on bool) {
+	a.mu.Lock()
+	b := a.backend
+	a.mu.Unlock()
+	if b == nil {
+		return
+	}
+	if err := b.SetRegisterProxy(on); err != nil {
+		a.ui.showErr(err)
+	}
+	if err := a.profiles.SaveConfig(b.Profile(), b.Config()); err != nil {
+		a.ui.showErr(err)
+	}
+	a.ui.scheduleRefresh()
 }
 
 // setHostname updates the profile's hostname setting and applies it

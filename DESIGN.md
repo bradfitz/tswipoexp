@@ -165,6 +165,39 @@ Creating the pipe is also the single-instance lock: a second copy
 fails to create it and exits with a message. The lock is taken before
 any profile directory is touched.
 
+### Registering the proxy with Windows
+
+While a profile is running and its RegisterProxy setting is on (the
+default), tswipoexp makes itself the current user's proxy:
+
+* WinINet per-connection settings via InternetSetOption with
+  INTERNET_OPTION_PER_CONNECTION_OPTION: flags DIRECT|PROXY, server
+  "http=ADDR;https=ADDR", bypass "localhost;127.*;[::1]". The usual
+  "<local>" bypass is not used because it means "any hostname without
+  a dot", which would route short MagicDNS names around the proxy
+  (this bit us: Edge got ERR_NAME_NOT_RESOLVED for short names while
+  FQDNs worked). Writing the legacy
+  ProxyEnable/ProxyServer registry values is not enough: WinHTTP
+  users (.NET, PowerShell) and Chromium browsers read the
+  per-connection blob, and Edge failed with ERR_NAME_NOT_RESOLVED
+  until this was switched. No socks= rule, since Chromium treats it
+  as SOCKS4.
+* Per-user environment variables HTTP_PROXY, HTTPS_PROXY, and
+  NO_PROXY in HKCU\Environment plus a WM_SETTINGCHANGE broadcast, so
+  newly launched command line tools pick them up.
+
+The previous settings are saved to %LOCALAPPDATA%\tswipoexp\
+proxy-restore.json and restored at exit, or at the next start on the
+same machine if the previous run died. That file is the one deliberate
+piece of state kept off the stick: it describes this machine, not the
+profile. A stick pulled from machine A and started on machine B can't
+repair A; A's browser is broken until tswipoexp runs there again or
+the user fixes the proxy setting by hand. Open question below.
+
+While the node is not Running, the proxy dials directly instead of
+failing, so the user's browsing keeps working with the proxy still
+registered; only tailnet names fail.
+
 ### Logging
 
 Each profile has a tswipoexp.log next to its tsnet state. tsnet's
@@ -194,16 +227,31 @@ rather than opening the browser unprompted.
 * Windows Firewall prompts when tsnet first binds UDP. Inbound direct
   connections need the user to allow it (admin), outbound works
   regardless. Do we warn in the GUI?
-* If tswipoexp crashes while the proxy is registered with the user
-  session, the registration lingers. Plan: save the previous settings
-  in the state directory and restore them at next start.
+* Pulling the stick while running leaves the machine's proxy pointed
+  at a dead port until tswipoexp runs there again. Could be mitigated
+  by a tiny watchdog or by using a PAC URL served by the proxy, which
+  browsers ignore when unreachable.
+* PAC versus static proxy: a PAC file could send only tailnet
+  destinations through the proxy and leave the rest alone. Static was
+  chosen for now because it's simpler and gives exit node semantics
+  for free.
+* Testing the browser path on the laptop uses headless Edge via
+  tools/edge-dump.cmd; Edge produces no output when run directly from
+  PowerShell.
 
 ## Plan
+
+Done:
 
 1. Hello World Fyne GUI cross-compiled from Linux and running on the Windows laptop.
 2. tsnet in the GUI: login, profile directories, status, peer list.
 3. SOCKS5 + HTTP proxy on localhost, registered with the Windows user session.
 4. tspo CLI over the LocalAPI.
 5. Hostname setting, Shields Up, auth key login.
-6. Exit nodes.
+
+Next:
+
+6. Exit nodes: picker in the GUI.
 7. Inbound: Tailscale SSH (opt-in).
+8. Polish: browser login flow verified end to end, profile switching
+   verified, tray icon, remembering window size.

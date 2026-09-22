@@ -41,6 +41,7 @@ type UI struct {
 	logoutBtn   *widget.Button
 	connectBtn  *widget.Button
 	shieldsUp   *widget.Check
+	regProxy    *widget.Check
 	hostEntry   *widget.Entry
 	hostBtn     *widget.Button
 	hostSync    *widget.Check
@@ -210,6 +211,11 @@ func (u *UI) build() {
 	})
 	u.reg("shieldsUp", u.shieldsUp)
 
+	u.regProxy = widget.NewCheck("Use as Windows system proxy while running (also sets HTTP_PROXY/HTTPS_PROXY)", func(on bool) {
+		a.setRegisterProxy(on)
+	})
+	u.reg("registerProxy", u.regProxy)
+
 	u.hostEntry = widget.NewEntry()
 	u.hostEntry.SetPlaceHolder(defaultHostname)
 	u.reg("hostnameEntry", u.hostEntry)
@@ -267,6 +273,7 @@ func (u *UI) build() {
 		container.NewHBox(u.loginBtn, u.connectBtn, u.logoutBtn),
 		container.NewBorder(nil, nil, nil, u.authKeyBtn, u.authKey),
 		u.shieldsUp,
+		u.regProxy,
 		container.NewBorder(nil, nil, widget.NewLabel("Hostname:"), container.NewHBox(u.hostBtn, u.hostSync), u.hostEntry),
 		widget.NewSeparator(),
 		widget.NewLabel("Peers"),
@@ -387,9 +394,16 @@ func (u *UI) refresh() {
 	}
 
 	if pa := b.ProxyAddr(); pa != "" {
-		u.proxyLabel.SetText("Proxy (SOCKS5 + HTTP): " + pa)
+		reg := "not registered with Windows"
+		if b.ProxyRegistered() {
+			reg = "registered as the Windows system proxy"
+		}
+		u.proxyLabel.SetText(fmt.Sprintf("Proxy (SOCKS5 + HTTP): %s, %s", pa, reg))
 	} else {
 		u.proxyLabel.SetText("Proxy: not running")
+	}
+	if u.regProxy.Checked != cfg.registerProxy() {
+		u.regProxy.SetChecked(cfg.registerProxy())
 	}
 	u.errLabel.SetText(b.LastErr())
 

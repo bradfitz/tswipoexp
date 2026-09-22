@@ -25,7 +25,7 @@ GOENV_WIN = CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=$(CC_WIN) CXX=$(CXX_WIN)
 LDFLAGS_GUI = -H windowsgui -s -w
 LDFLAGS_CLI = -s -w
 
-.PHONY: all build push run push-run ssh shot dbg clean
+.PHONY: all build push stop run push-run ssh shot dbg edge clean
 
 all: build
 
@@ -37,14 +37,21 @@ dist/tswipoexp.exe: $(wildcard *.go) go.mod go.sum
 dist/tspo.exe: $(wildcard cmd/tspo/*.go) go.mod go.sum
 	@if [ -d cmd/tspo ]; then $(GOENV_WIN) go build -ldflags="$(LDFLAGS_CLI)" -o $@ ./cmd/tspo; else echo "cmd/tspo not yet present; skipping"; fi
 
-# push copies the built binaries to the Windows box.
-push: build
+# push copies the built binaries to the Windows box, first stopping
+# any running instance (gracefully via the debug endpoint so it
+# restores the system proxy settings, then forcibly) since Windows
+# won't overwrite a running executable.
+push: build stop
 	@tailcat ssh $(WIN_ADDR) 'New-Item -ItemType Directory -Force -Path $(WIN_DIR) | Out-Null'
-	@for f in dist/*.exe; do tailcat cp $$f $(WIN_ADDR):$(WIN_SFTP_DIR)/$$(basename $$f); done
+	@for f in dist/*.exe tools/*.cmd; do tailcat cp $$f $(WIN_ADDR):$(WIN_SFTP_DIR)/$$(basename $$f); done
+
+# stop quits the GUI on the Windows box if it's running.
+stop:
+	@tailcat ssh $(WIN_ADDR) 'if (Get-Process tswipoexp -ErrorAction SilentlyContinue) { curl.exe -s -m 3 -X POST http://$(DEBUG_ADDR)/debug/quit 2>&1 | Out-Null; Start-Sleep 2; Get-Process tswipoexp -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue }; exit 0'
 
 # run starts the GUI on the Windows box, detached from the SSH session.
-run:
-	@tailcat ssh $(WIN_ADDR) 'Stop-Process -Name tswipoexp -Force -ErrorAction SilentlyContinue; Start-Process -FilePath $(WIN_DIR)/tswipoexp.exe -WorkingDirectory $(WIN_DIR) -ArgumentList "--debug-addr=$(DEBUG_ADDR)"'
+run: stop
+	@tailcat ssh $(WIN_ADDR) 'Start-Process -FilePath $(WIN_DIR)/tswipoexp.exe -WorkingDirectory $(WIN_DIR) -ArgumentList "--debug-addr=$(DEBUG_ADDR)"'
 
 push-run: push run
 
@@ -55,7 +62,14 @@ P ?= /debug/state
 M ?= GET
 Q ?=
 dbg:
-	@tailcat ssh $(WIN_ADDR) 'curl.exe -s -X $(M) "http://$(DEBUG_ADDR)$(P)?$(Q)"'
+	@tailcat ssh $(WIN_ADDR) 'curl.exe -s -m 20 -X $(M) "http://$(DEBUG_ADDR)$(P)?$(Q)"; exit 0'
+
+# edge fetches URL with headless Edge on the Windows box, which
+# honors the Windows system proxy, and prints matching lines.
+#   make edge URL=http://tswipoexp-target/
+URL ?= http://tswipoexp-target/
+edge:
+	@tailcat ssh $(WIN_ADDR) '& $(WIN_DIR)/edge-dump.cmd $(URL); Get-Content $(WIN_DIR)/edge-out.txt | Select-String -Pattern "hello from|peer:|ERR_|<title>" | Select -First 3; exit 0'
 
 # ssh opens an interactive PowerShell on the Windows box.
 ssh:

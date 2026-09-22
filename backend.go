@@ -89,8 +89,31 @@ func (b *Backend) Start(authKey string) error {
 
 	if err := b.startProxy(); err != nil {
 		b.setErr("proxy: %v", err)
+	} else if b.cfg.registerProxy() {
+		if err := registerSystemProxy(b.ProxyAddr(), b.logf); err != nil {
+			b.setErr("registering proxy with Windows: %v", err)
+		}
 	}
 	return nil
+}
+
+// SetRegisterProxy turns registration of the proxy with the user's
+// Windows session on or off and applies it immediately.
+func (b *Backend) SetRegisterProxy(on bool) error {
+	b.cfg.RegisterProxy = &on
+	if b.ProxyAddr() == "" {
+		return nil
+	}
+	if on {
+		return registerSystemProxy(b.ProxyAddr(), b.logf)
+	}
+	return unregisterSystemProxy(b.logf)
+}
+
+// ProxyRegistered reports whether the user's Windows proxy settings
+// currently point at our proxy.
+func (b *Backend) ProxyRegistered() bool {
+	return b.ProxyAddr() != "" && systemProxyIsOurs(b.ProxyAddr())
 }
 
 // Close shuts everything down. It's safe to call more than once.
@@ -105,6 +128,9 @@ func (b *Backend) Close() error {
 
 	b.cancel()
 	if b.proxyLn != nil {
+		if err := unregisterSystemProxy(b.logf); err != nil {
+			b.logf("unregistering proxy: %v", err)
+		}
 		b.proxyLn.Close()
 	}
 	if b.ts != nil {
@@ -349,20 +375,20 @@ func (b *Backend) startProxy() error {
 	return nil
 }
 
-// dial is the proxy's dialer onto the tailnet. Unlike tsnet's Dial it
-// doesn't block waiting for the node to reach Running, since a
-// browser hanging forever is worse than a fast error.
+// dial is the proxy's dialer. While the node is Running everything
+// goes through tsnet, which handles tailnet destinations itself and
+// hands the rest to the OS (or the exit node, if one is set). When
+// the node isn't Running, the proxy is likely still registered as the
+// system proxy, so rather than break all browsing it dials directly;
+// tailnet names then fail with an ordinary DNS error.
 func (b *Backend) dial(ctx context.Context, network, addr string) (net.Conn, error) {
-	st := b.Status()
-	if st == nil || st.BackendState != ipn.Running.String() {
-		state := "unknown"
-		if st != nil {
-			state = st.BackendState
-		}
-		return nil, fmt.Errorf("tswipoexp is not connected to the tailnet (state %s)", state)
-	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	st := b.Status()
+	if st == nil || st.BackendState != ipn.Running.String() {
+		var d net.Dialer
+		return d.DialContext(ctx, network, addr)
+	}
 	return b.ts.Dial(ctx, network, addr)
 }
 
