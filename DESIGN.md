@@ -194,11 +194,17 @@ default), tswipoexp makes itself the current user's proxy:
 
 The previous settings are saved to %LOCALAPPDATA%\tswipoexp\
 proxy-restore.json and restored at exit, or at the next start on the
-same machine if the previous run died. That file is the one deliberate
-piece of state kept off the stick: it describes this machine, not the
-profile. A stick pulled from machine A and started on machine B can't
-repair A; A's browser is broken until tswipoexp runs there again or
-the user fixes the proxy setting by hand. Open question below.
+same machine if the previous run died. Alongside it, tswipoexp writes
+restore-proxy.reg (the previous WinINet values, connection blob, and
+environment variables) and restore-proxy.cmd (reg import plus self
+delete), and points a per-user RunOnce entry at the .cmd. If the app
+dies or the machine reboots with it running, Windows restores the
+proxy at the user's next logon with nothing needed from the stick. A
+clean exit removes the entry and files. These are the deliberate
+pieces of state kept off the stick: they describe this machine, not
+the profile. This was added after Windows Update rebooted the test
+laptop while tswipoexp was running and left its proxy pointing at a
+dead port until the next morning.
 
 While the node is not Running, the proxy dials directly instead of
 failing, so the user's browsing keeps working with the proxy still
@@ -283,9 +289,10 @@ testing this from Linux.
   both ways. Worth checking on a machine with stricter firewall
   settings before deciding whether the GUI needs a warning.
 * Pulling the stick while running leaves the machine's proxy pointed
-  at a dead port until tswipoexp runs there again. Could be mitigated
-  by a tiny watchdog or by using a PAC URL served by the proxy, which
-  browsers ignore when unreachable.
+  at a dead port until the user's next logon, when the RunOnce
+  restore runs. The gap until then could be closed with a PAC URL
+  served by the proxy, which browsers ignore when unreachable, or a
+  tiny watchdog process.
 * PAC versus static proxy: a PAC file could send only tailnet
   destinations through the proxy and leave the rest alone. Static was
   chosen for now because it's simpler and gives exit node semantics

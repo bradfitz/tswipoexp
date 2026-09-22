@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -32,11 +33,6 @@ const (
 	internetPerConnProxyServer   = 2
 	internetPerConnProxyBypass   = 3
 	internetPerConnAutoconfigURL = 4
-
-	proxyTypeDirect       = 0x1
-	proxyTypeProxy        = 0x2
-	proxyTypeAutoProxyURL = 0x4
-	proxyTypeAutoDetect   = 0x8
 
 	// winuser.h
 	wmSettingChange  = 0x001A
@@ -77,11 +73,6 @@ type perConnOptionList struct {
 // proxyBypassList is the WinINet bypass list used while registered.
 const proxyBypassList = "localhost;127.*;[::1]"
 
-// proxyEnvVars are the per-user environment variables set to point
-// at the proxy. Many command line tools honor these where they don't
-// honor WinINet settings.
-var proxyEnvVars = []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"}
-
 // registerSystemProxy points the current user's WinINet proxy
 // settings and proxy environment variables at addr (a host:port),
 // saving the previous values first. Calling it while already
@@ -106,6 +97,11 @@ func registerSystemProxy(addr string, logf func(string, ...any)) error {
 		}
 		if err := prev.save(); err != nil {
 			return fmt.Errorf("saving proxy restore file: %w", err)
+		}
+		if err := installCrashRestore(prev); err != nil {
+			// Not fatal: the in-process restore still works for a
+			// clean exit. But say so, since it's the safety net.
+			logf("winproxy: installing crash restore: %v", err)
 		}
 	}
 
@@ -150,7 +146,72 @@ func unregisterSystemProxy(logf func(string, ...any)) error {
 	if err := removeSavedProxySettings(); err != nil {
 		logf("winproxy: removing restore file: %v", err)
 	}
+	if err := removeCrashRestore(); err != nil {
+		logf("winproxy: removing crash restore: %v", err)
+	}
 	logf("winproxy: restored previous proxy settings")
+	return nil
+}
+
+const (
+	runOnceKey       = `Software\Microsoft\Windows\CurrentVersion\RunOnce`
+	runOnceValueName = "tswipoexp-restore-proxy"
+	crashRestoreCmd  = "restore-proxy.cmd"
+	crashRestoreReg  = "restore-proxy.reg"
+	connectionsKey   = `Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections`
+)
+
+// installCrashRestore writes the restore .reg and .cmd next to the
+// restore JSON and registers the .cmd to run once at the user's next
+// logon, so an unclean exit still gets the proxy settings put back.
+func installCrashRestore(prev *savedProxySettings) error {
+	restorePath, err := proxyRestorePath()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(restorePath)
+
+	var blob []byte
+	if k, err := registry.OpenKey(registry.CURRENT_USER, connectionsKey, registry.QUERY_VALUE); err == nil {
+		blob, _, _ = k.GetBinaryValue("DefaultConnectionSettings")
+		k.Close()
+	}
+	regPath := filepath.Join(dir, crashRestoreReg)
+	if err := writeFileAtomic(regPath, []byte(restoreRegFile(prev, blob))); err != nil {
+		return err
+	}
+	cmdPath := filepath.Join(dir, crashRestoreCmd)
+	if err := writeFileAtomic(cmdPath, []byte(restoreCmdFile(crashRestoreReg))); err != nil {
+		return err
+	}
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, runOnceKey, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	return k.SetStringValue(runOnceValueName, fmt.Sprintf(`cmd.exe /c "%s"`, cmdPath))
+}
+
+// removeCrashRestore deletes the RunOnce entry and its files after a
+// clean restore.
+func removeCrashRestore() error {
+	if k, err := registry.OpenKey(registry.CURRENT_USER, runOnceKey, registry.SET_VALUE); err == nil {
+		if err := k.DeleteValue(runOnceValueName); err != nil && !errors.Is(err, registry.ErrNotExist) {
+			k.Close()
+			return err
+		}
+		k.Close()
+	}
+	restorePath, err := proxyRestorePath()
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(restorePath)
+	for _, name := range []string{crashRestoreCmd, crashRestoreReg} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	return nil
 }
 

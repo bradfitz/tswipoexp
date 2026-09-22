@@ -7,6 +7,20 @@ import (
 	"path/filepath"
 )
 
+// PROXY_TYPE_* flags from wininet.h, as stored in the per-connection
+// settings and in savedProxySettings.ProxyFlags.
+const (
+	proxyTypeDirect       = 0x1
+	proxyTypeProxy        = 0x2
+	proxyTypeAutoProxyURL = 0x4
+	proxyTypeAutoDetect   = 0x8
+)
+
+// proxyEnvVars are the per-user environment variables set to point
+// at the proxy. Many command line tools honor these where they don't
+// honor WinINet settings.
+var proxyEnvVars = []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"}
+
 // proxyRestoreFile is the machine-local file remembering the proxy
 // settings that were in place before tswipoexp registered its own,
 // so they can be put back at exit or, after a crash or yanked USB
