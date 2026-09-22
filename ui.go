@@ -44,6 +44,9 @@ type UI struct {
 	ipsHint          *widget.Label
 	userLabel        *widget.Label
 	hostLabel        *widget.Label
+	dnsCopy          *copyText
+	hostHint         *widget.Label
+	peersHint        *widget.Label
 	proxyLabel       *widget.Label
 	errLabel         *widget.Label
 	loginBtn         *widget.Button
@@ -75,6 +78,7 @@ type UI struct {
 // peerRow is one row of the peer table.
 type peerRow struct {
 	Name, IP, OS, Online, Path string
+	CopyName                   string // the plain short hostname, without annotations
 }
 
 func newUI(a *App) *UI {
@@ -135,6 +139,11 @@ func (u *UI) build() {
 	u.reg("user", u.userLabel)
 	u.hostLabel = widget.NewLabel("")
 	u.reg("hostname", u.hostLabel)
+	u.hostHint = widget.NewLabel("")
+	u.hostHint.TextStyle = fyne.TextStyle{Italic: true}
+	u.dnsCopy = newCopyText("", u.hostHint, a.fy.Clipboard())
+	u.reg("dnsName", u.dnsCopy)
+	hostRow := container.NewHBox(u.hostLabel, container.NewCenter(u.dnsCopy), u.hostHint)
 	u.proxyLabel = widget.NewLabel("")
 	u.reg("proxy", u.proxyLabel)
 	u.errLabel = widget.NewLabel("")
@@ -282,17 +291,39 @@ func (u *UI) build() {
 	peersBtn := widget.NewButton("View...", u.showPeersWindow)
 	u.reg("viewPeers", peersBtn)
 
+	u.peersHint = widget.NewLabel("")
+	u.peersHint.TextStyle = fyne.TextStyle{Italic: true}
 	u.peersTable = widget.NewTableWithHeaders(
 		func() (int, int) { return len(u.peers), len(u.peersHeader) },
-		func() fyne.CanvasObject { return widget.NewLabel("") },
+		func() fyne.CanvasObject {
+			// Each cell holds both a plain label and a copyable
+			// text; the column decides which one shows.
+			return container.NewStack(widget.NewLabel(""), container.NewCenter(newCopyText("", u.peersHint, a.fy.Clipboard())))
+		},
 		func(id widget.TableCellID, o fyne.CanvasObject) {
-			l := o.(*widget.Label)
+			stack := o.(*fyne.Container)
+			l := stack.Objects[0].(*widget.Label)
+			c := stack.Objects[1].(*fyne.Container).Objects[0].(*copyText)
 			if id.Row >= len(u.peers) {
 				l.SetText("")
+				c.SetValue("")
 				return
 			}
 			p := u.peers[id.Row]
-			l.SetText([]string{p.Name, p.IP, p.OS, p.Online, p.Path}[id.Col])
+			switch id.Col {
+			case 0:
+				l.Hide()
+				c.SetDisplayAndValue(p.Name, p.CopyName)
+				c.Show()
+			case 1:
+				l.Hide()
+				c.SetValue(p.IP)
+				c.Show()
+			default:
+				c.Hide()
+				l.SetText([]string{p.Name, p.IP, p.OS, p.Online, p.Path}[id.Col])
+				l.Show()
+			}
 		},
 	)
 	u.peersTable.ShowHeaderColumn = false
@@ -316,7 +347,7 @@ func (u *UI) build() {
 		container.NewHBox(dotCell, u.stateLabel, u.loginBtn, u.authKeyCell, u.authKeyBtn, u.connectBtn, u.logoutBtn),
 		ipsRow,
 		u.userLabel,
-		container.NewBorder(nil, nil, nil, hostBtn, u.hostLabel),
+		container.NewBorder(nil, nil, nil, hostBtn, hostRow),
 		container.NewBorder(nil, nil, nil, peersBtn, u.peersLabel),
 		u.errLabel,
 		widget.NewSeparator(),
@@ -455,6 +486,7 @@ func (u *UI) refresh() {
 		u.setIPs(nil)
 		u.userLabel.SetText("")
 		u.hostLabel.SetText("")
+		u.dnsCopy.SetValue("")
 		u.proxyLabel.SetText("")
 		u.peers = nil
 		u.peersLabel.SetText("Peers: 0")
@@ -497,7 +529,8 @@ func (u *UI) refresh() {
 		host = st.Self.HostName
 		dns = strings.TrimSuffix(st.Self.DNSName, ".")
 	}
-	u.hostLabel.SetText(fmt.Sprintf("Hostname: %s   DNS name: %s", host, dns))
+	u.hostLabel.SetText(fmt.Sprintf("Hostname: %s   DNS name:", host))
+	u.dnsCopy.SetValue(dns)
 
 	if pa := b.ProxyAddr(); pa != "" {
 		reg := "not registered with Windows"
@@ -575,7 +608,7 @@ func (u *UI) showPeersWindow() {
 	}
 	w := u.app.fy.NewWindow("tswipoexp peers")
 	w.SetIcon(appIcon)
-	w.SetContent(u.peersTable)
+	w.SetContent(container.NewBorder(nil, u.peersHint, nil, nil, u.peersTable))
 	w.Resize(fyne.NewSize(760, 480))
 	w.SetOnClosed(func() { u.peersWin = nil })
 	u.peersWin = w
@@ -701,13 +734,14 @@ func peerRows(st *ipnstate.Status) []peerRow {
 		default:
 			path = "idle"
 		}
-		name := shortName(p)
+		short := shortName(p)
+		name := short
 		if p.ExitNode {
 			name += " (exit node)"
 		} else if p.ExitNodeOption {
 			name += " (exit node option)"
 		}
-		rows = append(rows, peerRow{Name: name, IP: ip, OS: p.OS, Online: online, Path: path})
+		rows = append(rows, peerRow{Name: name, CopyName: short, IP: ip, OS: p.OS, Online: online, Path: path})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Online != rows[j].Online {

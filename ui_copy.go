@@ -32,12 +32,16 @@ func newCopyText(value string, hint *widget.Label, clip fyne.Clipboard) *copyTex
 }
 
 // SetValue changes the text shown and copied.
-func (c *copyText) SetValue(v string) {
-	if c.value == v {
+func (c *copyText) SetValue(v string) { c.SetDisplayAndValue(v, v) }
+
+// SetDisplayAndValue shows display but copies value, for text with
+// annotations that shouldn't end up on the clipboard.
+func (c *copyText) SetDisplayAndValue(display, value string) {
+	if c.value == value && c.text.Text == display {
 		return
 	}
-	c.value = v
-	c.text.Text = v
+	c.value = value
+	c.text.Text = display
 	c.text.Refresh()
 	c.Refresh()
 }
