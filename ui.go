@@ -43,6 +43,7 @@ type UI struct {
 	connectBtn  *widget.Button
 	shieldsUp   *widget.Check
 	regProxy    *widget.Check
+	sshCheck    *widget.Check
 	exitNode    *widget.Select
 	exitNodeIDs map[string]tailcfg.StableNodeID // select option label to node
 	hostEntry   *widget.Entry
@@ -219,6 +220,11 @@ func (u *UI) build() {
 	})
 	u.reg("registerProxy", u.regProxy)
 
+	u.sshCheck = widget.NewCheck("Allow SSH from my other tailnet devices (PowerShell as this Windows user)", func(on bool) {
+		a.setSSH(on)
+	})
+	u.reg("ssh", u.sshCheck)
+
 	u.exitNodeIDs = map[string]tailcfg.StableNodeID{}
 	u.exitNode = widget.NewSelect([]string{exitNodeNone}, func(label string) {
 		b := a.backend
@@ -298,6 +304,7 @@ func (u *UI) build() {
 		container.NewBorder(nil, nil, nil, u.authKeyBtn, u.authKey),
 		u.shieldsUp,
 		u.regProxy,
+		u.sshCheck,
 		container.NewBorder(nil, nil, widget.NewLabel("Exit node:"), nil, u.exitNode),
 		container.NewBorder(nil, nil, widget.NewLabel("Hostname:"), container.NewHBox(u.hostBtn, u.hostSync), u.hostEntry),
 		widget.NewSeparator(),
@@ -429,6 +436,9 @@ func (u *UI) refresh() {
 	}
 	if u.regProxy.Checked != cfg.registerProxy() {
 		u.regProxy.SetChecked(cfg.registerProxy())
+	}
+	if u.sshCheck.Checked != cfg.SSH {
+		u.sshCheck.SetChecked(cfg.SSH)
 	}
 	u.errLabel.SetText(b.LastErr())
 

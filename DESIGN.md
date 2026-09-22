@@ -236,7 +236,29 @@ devtarget works around it with RegisterFallbackTCPHandler forwarding
 non-tailnet destinations. That's a tsnet limitation, not a tswipoexp
 one, and only matters for the test target.
 
+### SSH
+
+Tailscale's own SSH server doesn't build on Windows, so tswipoexp
+follows tailcat's approach instead. A per-profile opt-in (off by
+default) runs a gliderssh server on the node's tailnet addresses at
+port 22 via tsnet's Listen. Authorization is by tunnel identity:
+WhoIs on the peer address must return the same tailnet login as this
+node's owner; there is no SSH-level client authentication and tagged
+or other users' devices are refused. Sessions run PowerShell as the
+current Windows user, over ConPTY when the client asks for a PTY
+(code adapted from tailcat). The ed25519 host key lives in the profile
+directory so it roams with the profile. No SFTP, no port forwarding.
+
+Tailscale SSH ACL rules from the tailnet policy are not consulted;
+that's an open question below. cmd/devssh is a tsnet SSH client for
+testing this from Linux.
+
 ## Open questions
+
+* SSH authorization ignores the tailnet's SSH ACL rules and uses
+  "same user" only. Options: honor the SSH rules from the netmap (not
+  exposed by tsnet today), or add an allowlist of users/tags in the
+  profile config.
 
 * Should logtail uploads be disabled for a portable client?
 * Windows Firewall prompts when tsnet first binds UDP. Inbound direct
@@ -267,6 +289,6 @@ Done:
 Next:
 
 6. Exit nodes: picker in the GUI (done and tested).
-7. Inbound: Tailscale SSH (opt-in).
+7. Inbound: SSH (opt-in), done.
 8. Polish: browser login flow verified end to end, profile switching
    verified, tray icon, remembering window size.

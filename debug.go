@@ -64,6 +64,7 @@ func (a *App) debugState(w http.ResponseWriter, r *http.Request) {
 		AuthURL     string
 		LastErr     string
 		ProxyAddr   string
+		SSH         bool
 		TailscaleIP []string
 		Hostname    string
 		DNSName     string
@@ -78,6 +79,7 @@ func (a *App) debugState(w http.ResponseWriter, r *http.Request) {
 		s.AuthURL = b.AuthURL()
 		s.LastErr = b.LastErr()
 		s.ProxyAddr = b.ProxyAddr()
+		s.SSH = b.SSHRunning()
 		if st := b.Status(); st != nil {
 			s.Backend = st.BackendState
 			for _, ip := range st.TailscaleIPs {

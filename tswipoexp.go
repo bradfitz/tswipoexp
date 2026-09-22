@@ -44,6 +44,7 @@ func main() {
 	log.SetOutput(logs)
 	log.SetFlags(0)
 	logf := logs.Logf
+	sshDebugf = logf
 
 	root := *stateDir
 	if root == "" {
@@ -204,6 +205,24 @@ func (a *App) setRegisterProxy(on bool) {
 		return
 	}
 	if err := b.SetRegisterProxy(on); err != nil {
+		a.ui.showErr(err)
+	}
+	if err := a.profiles.SaveConfig(b.Profile(), b.Config()); err != nil {
+		a.ui.showErr(err)
+	}
+	a.ui.scheduleRefresh()
+}
+
+// setSSH toggles the SSH server for the current profile and saves
+// the choice.
+func (a *App) setSSH(on bool) {
+	a.mu.Lock()
+	b := a.backend
+	a.mu.Unlock()
+	if b == nil {
+		return
+	}
+	if err := b.SetSSH(on); err != nil {
 		a.ui.showErr(err)
 	}
 	if err := a.profiles.SaveConfig(b.Profile(), b.Config()); err != nil {

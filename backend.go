@@ -41,6 +41,7 @@ type Backend struct {
 	lc *local.Client
 
 	proxyLn net.Listener
+	sshSrv  *sshServer // nil unless SSH is on
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -89,6 +90,11 @@ func (b *Backend) Start(authKey string) error {
 	go b.watchIPNBus()
 	go b.pollStatus()
 
+	if b.cfg.SSH {
+		if err := b.startSSH(); err != nil {
+			b.setErr("ssh: %v", err)
+		}
+	}
 	if err := b.startProxy(); err != nil {
 		b.setErr("proxy: %v", err)
 	} else if b.cfg.registerProxy() {
@@ -97,6 +103,70 @@ func (b *Backend) Start(authKey string) error {
 		}
 	}
 	return nil
+}
+
+// startSSH listens for SSH on the node's tailnet addresses.
+func (b *Backend) startSSH() error {
+	ln, err := b.ts.Listen("tcp", ":22")
+	if err != nil {
+		return err
+	}
+	s := &sshServer{
+		logf: b.logf,
+		lc:   b.lc,
+		dir:  b.dir,
+		ln:   ln,
+		selfID: func() (string, bool) {
+			st := b.Status()
+			if st == nil || st.Self == nil {
+				return "", false
+			}
+			up, ok := st.User[st.Self.UserID]
+			if !ok {
+				return "", false
+			}
+			return up.LoginName, true
+		},
+	}
+	b.mu.Lock()
+	b.sshSrv = s
+	b.mu.Unlock()
+	go s.serve()
+	b.logf("ssh: listening on the tailnet, port 22")
+	return nil
+}
+
+func (b *Backend) stopSSH() {
+	b.mu.Lock()
+	s := b.sshSrv
+	b.sshSrv = nil
+	b.mu.Unlock()
+	if s != nil {
+		s.close()
+	}
+}
+
+// SetSSH turns the SSH server on or off and records the choice.
+func (b *Backend) SetSSH(on bool) error {
+	b.cfg.SSH = on
+	if !on {
+		b.stopSSH()
+		return nil
+	}
+	b.mu.Lock()
+	running := b.sshSrv != nil
+	b.mu.Unlock()
+	if running {
+		return nil
+	}
+	return b.startSSH()
+}
+
+// SSHRunning reports whether the SSH server is listening.
+func (b *Backend) SSHRunning() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.sshSrv != nil
 }
 
 // SetRegisterProxy turns registration of the proxy with the user's
@@ -139,6 +209,7 @@ func (b *Backend) Close() error {
 	b.mu.Unlock()
 
 	b.cancel()
+	b.stopSSH()
 	if b.proxyLn != nil {
 		if err := unregisterSystemProxy(b.logf); err != nil {
 			b.logf("unregistering proxy: %v", err)

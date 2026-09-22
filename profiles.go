@@ -53,6 +53,11 @@ type Config struct {
 	// RegisterProxy, if non-nil and false, disables registering the
 	// proxy with the Windows user session. It defaults to on.
 	RegisterProxy *bool `json:",omitempty"`
+
+	// SSH, if true, runs an SSH server on the tailnet that gives
+	// peers owned by the same tailnet user a shell as the current
+	// Windows user. Off by default.
+	SSH bool `json:",omitempty"`
 }
 
 func (c *Config) hostname() string {
