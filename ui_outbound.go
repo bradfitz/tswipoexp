@@ -24,7 +24,7 @@ func (u *UI) showOutboundSettings() {
 		u.showErr(fmt.Errorf("no profile loaded"))
 		return
 	}
-	cfg := *b.Config() // edit a copy; saved on OK
+	cfg := *b.Config() // a snapshot for the initial widget values only
 
 	mode := widget.NewRadioGroup([]string{
 		"Auto-config script (PAC): only tailnet traffic uses the proxy; apps go direct when tswipoexp isn't running",
@@ -104,22 +104,25 @@ func (u *UI) showOutboundSettings() {
 			return
 		}
 		env, wd, ro := envVars.Checked, watchdog.Checked, runOnce.Checked
-		cfg.SetEnvVars = &env
-		cfg.Watchdog = &wd
-		cfg.RunOnceRestore = &ro
-		cfg.PACAllTraffic = allTraffic.Checked
-		if mode.Selected == mode.Options[1] {
-			cfg.ProxyMode = proxyModeStatic
-		} else {
-			cfg.ProxyMode = proxyModePAC
-		}
+		static := mode.Selected == mode.Options[1]
+		all := allTraffic.Checked
 		addrChanged := newAddr != b.Config().proxyAddr()
-		if newAddr == defaultProxyAddr {
-			cfg.ProxyAddr = ""
-		} else {
-			cfg.ProxyAddr = newAddr
-		}
-		a.applyOutbound(cfg, addrChanged)
+		a.applyOutbound(func(c *Config) {
+			c.SetEnvVars = &env
+			c.Watchdog = &wd
+			c.RunOnceRestore = &ro
+			c.PACAllTraffic = all
+			if static {
+				c.ProxyMode = proxyModeStatic
+			} else {
+				c.ProxyMode = proxyModePAC
+			}
+			if newAddr == defaultProxyAddr {
+				c.ProxyAddr = ""
+			} else {
+				c.ProxyAddr = newAddr
+			}
+		}, addrChanged)
 	}, u.win)
 	u.outboundDialog = d
 	d.SetOnClosed(func() { u.outboundDialog = nil })

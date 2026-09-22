@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -197,7 +199,9 @@ func (a *App) stopBackend() {
 // switchProfile stops the current profile and starts another. It
 // runs on the UI goroutine but does the work in the background.
 func (a *App) switchProfile(name string) {
-	a.ui.stateLabel.SetText("State: switching to profile " + name)
+	_, file, line, _ := runtime.Caller(1)
+	a.logf("switchProfile(%q) from %s:%d (current %q)", name, filepath.Base(file), line, a.currentProfile())
+	a.ui.setState("Switching to profile "+name, stateColorGray)
 	go func() {
 		a.stopBackend()
 		err := a.startBackend(name)
@@ -219,23 +223,24 @@ func (a *App) setOutboundEnabled(on bool) {
 	if b == nil || b.Config().registerProxy() == on {
 		return // programmatic checkbox update
 	}
-	cfg := *b.Config()
-	cfg.RegisterProxy = &on
-	a.applyOutbound(cfg, false)
+	a.applyOutbound(func(c *Config) { c.RegisterProxy = &on }, false)
 }
 
-// applyOutbound saves new outbound access settings for the current
-// profile and applies them. If the proxy address changed the profile
-// is restarted, since the listener can't move while running.
-func (a *App) applyOutbound(cfg Config, addrChanged bool) {
+// applyOutbound applies a change to the current profile's outbound
+// access settings: mutate edits the live config in place (so fields
+// the caller doesn't own, such as SSH, are never clobbered by a stale
+// copy), the result is saved, and the registration is redone. If the
+// proxy address changed the profile is restarted, since the listener
+// can't move while running.
+func (a *App) applyOutbound(mutate func(*Config), addrChanged bool) {
 	a.mu.Lock()
 	b := a.backend
 	a.mu.Unlock()
 	if b == nil {
 		return
 	}
-	*b.Config() = cfg
-	if err := a.profiles.SaveConfig(b.Profile(), &cfg); err != nil {
+	mutate(b.Config())
+	if err := a.profiles.SaveConfig(b.Profile(), b.Config()); err != nil {
 		a.ui.showErr(err)
 		return
 	}

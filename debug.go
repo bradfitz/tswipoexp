@@ -44,7 +44,13 @@ func (a *App) serveDebug(addr string) error {
 		fyne.Do(a.quit)
 	})
 	a.logf("debug endpoint listening on http://%v/debug/state", ln.Addr())
-	go http.Serve(ln, mux)
+	logged := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/debug/log" && r.URL.Path != "/debug/state" && r.URL.Path != "/debug/tree" && r.URL.Path != "/debug/status" {
+			a.logf("debug: %s %s", r.Method, r.URL.RequestURI())
+		}
+		mux.ServeHTTP(w, r)
+	})
+	go http.Serve(ln, logged)
 	return nil
 }
 
