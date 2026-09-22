@@ -13,6 +13,8 @@ WIN_DIR ?= C:/tswipoexp
 # The tailcat SFTP server on the Windows box is rooted at C:\, so copy
 # destinations are relative to that root.
 WIN_SFTP_DIR ?= tswipoexp
+# DEBUG_ADDR is where the pushed GUI serves its debug endpoint; empty disables it.
+DEBUG_ADDR ?= 127.0.0.1:8181
 
 CC_WIN ?= x86_64-w64-mingw32-gcc
 CXX_WIN ?= x86_64-w64-mingw32-g++
@@ -23,7 +25,7 @@ GOENV_WIN = CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=$(CC_WIN) CXX=$(CXX_WIN)
 LDFLAGS_GUI = -H windowsgui -s -w
 LDFLAGS_CLI = -s -w
 
-.PHONY: all build push run push-run ssh shot clean
+.PHONY: all build push run push-run ssh shot dbg clean
 
 all: build
 
@@ -42,9 +44,18 @@ push: build
 
 # run starts the GUI on the Windows box, detached from the SSH session.
 run:
-	@tailcat ssh $(WIN_ADDR) 'Stop-Process -Name tswipoexp -Force -ErrorAction SilentlyContinue; Start-Process -FilePath $(WIN_DIR)/tswipoexp.exe -WorkingDirectory $(WIN_DIR)'
+	@tailcat ssh $(WIN_ADDR) 'Stop-Process -Name tswipoexp -Force -ErrorAction SilentlyContinue; Start-Process -FilePath $(WIN_DIR)/tswipoexp.exe -WorkingDirectory $(WIN_DIR) -ArgumentList "--debug-addr=$(DEBUG_ADDR)"'
 
 push-run: push run
+
+# dbg fetches a debug endpoint path from the running GUI, e.g.
+#   make dbg P=/debug/state
+#   make dbg P=/debug/tap M=POST Q=name=login
+P ?= /debug/state
+M ?= GET
+Q ?=
+dbg:
+	@tailcat ssh $(WIN_ADDR) 'curl.exe -s -X $(M) "http://$(DEBUG_ADDR)$(P)?$(Q)"'
 
 # ssh opens an interactive PowerShell on the Windows box.
 ssh:

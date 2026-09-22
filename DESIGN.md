@@ -114,6 +114,90 @@ Cross-compiled from Linux (with Docker if needed for the cgo toolchain
 that Fyne requires). Testing is done on a Windows laptop reachable
 via tailcat; its address is in ~/keys/win-surface.
 
+## Decisions taken while implementing
+
+These were made without discussion to keep moving. Revisit any of them.
+
+### Layout of the code
+
+* Root package: the GUI binary. tswipoexp.go holds main and the App
+  type; backend.go wraps one profile's tsnet node; profiles.go
+  handles the state directory; ui.go is the Fyne window; debug.go is
+  the debug endpoint; localapi.go bridges the LocalAPI to the named
+  pipe.
+* cmd/tspo: the CLI. It is tailscale.com/cmd/tailscale/cli with a
+  --socket flag pointing at the named pipe prepended to the args.
+* cmd/devtarget: a tsnet node serving an HTTP echo page on the test
+  tailnet, used as a fetch target during development. Not shipped.
+
+### Per-profile config
+
+Each profile directory has a tswipoexp.json with the settings that
+tsnet has no concept of or that are needed before it starts:
+Hostname, SyncHostname, ProxyAddr, RegisterProxy. Everything else
+(shields up, exit node, the node key) lives in tsnet's own state
+files in the same directory. Writes are atomic (temp file plus
+rename) since the directory may be on a USB stick.
+
+A profile named "Default" is created when the state directory has
+none.
+
+### Proxy
+
+Fixed default address 127.0.0.1:1055, per-profile configurable, no
+authentication (loopback only). The dialer fails fast with a clear
+error while the node isn't in the Running state rather than blocking
+the browser.
+
+### LocalAPI for the CLI
+
+tsnet only exposes the LocalAPI in-process or over a loopback TCP
+port that requires a random credential plus a Sec-Tailscale header.
+tswipoexp serves a fixed named pipe, \\.\pipe\tswipoexp, and reverse
+proxies it to that loopback port, adding the credential and header.
+The real tailscale CLI can then talk to it via --socket, unchanged.
+
+The pipe ACL grants access only to the current user and SYSTEM. It
+can't use tailscaled's safesocket package because that sets Builtin
+Administrators as the pipe owner, which fails without admin rights.
+
+Creating the pipe is also the single-instance lock: a second copy
+fails to create it and exits with a message. The lock is taken before
+any profile directory is touched.
+
+### Logging
+
+Each profile has a tswipoexp.log next to its tsnet state. tsnet's
+own logtail configuration and upload behavior is left at its default,
+which means logs are uploaded to Tailscale's log service like any
+tsnet app. Open question: whether a portable client should do that.
+
+### Debug endpoint
+
+--debug-addr=127.0.0.1:PORT (loopback only, off by default) serves:
+/debug/state (JSON summary), /debug/status (raw ipnstate.Status),
+/debug/tree (named widgets and their text, options, enabled state),
+POST /debug/tap?name=, POST /debug/set?name=&text=,
+/debug/screenshot (PNG of the Fyne canvas, works with a locked
+desktop), /debug/log (recent log lines), POST /debug/quit.
+
+### Auth key login from the GUI
+
+Entering a key calls LocalAPI Start with the key and current prefs,
+then StartLoginInteractive, which is what "tailscale up --authkey"
+does. Browser login shows the URL from the IPN bus behind a button
+rather than opening the browser unprompted.
+
+## Open questions
+
+* Should logtail uploads be disabled for a portable client?
+* Windows Firewall prompts when tsnet first binds UDP. Inbound direct
+  connections need the user to allow it (admin), outbound works
+  regardless. Do we warn in the GUI?
+* If tswipoexp crashes while the proxy is registered with the user
+  session, the registration lingers. Plan: save the previous settings
+  in the state directory and restore them at next start.
+
 ## Plan
 
 1. Hello World Fyne GUI cross-compiled from Linux and running on the Windows laptop.

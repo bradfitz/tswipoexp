@@ -1,31 +1,242 @@
 // The tswipoexp command is a portable Windows Tailscale client: a
 // userspace tailscaled with a GUI that keeps its state next to the
-// binary.
+// binary and exposes the tailnet to other programs through a local
+// SOCKS5 and HTTP proxy.
 package main
 
 import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"log"
 	"os"
-	"runtime"
+	"sync"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/widget"
+	"tailscale.com/ipn"
 )
 
-func main() {
-	a := app.New()
-	w := a.NewWindow("tswipoexp")
+var (
+	debugAddr = flag.String("debug-addr", "", "if set, a loopback host:port on which to serve the debug and automation HTTP endpoint (off by default)")
+	stateDir  = flag.String("state-dir", "", "state directory; defaults to tswipoexp-state next to the executable")
+	profile   = flag.String("profile", "", "profile to load; defaults to the one named in active-profile.txt")
+)
 
-	exe, _ := os.Executable()
-	host, _ := os.Hostname()
-	w.SetContent(container.NewVBox(
-		widget.NewLabel("Hello from tswipoexp"),
-		widget.NewLabel("Go "+runtime.Version()+" "+runtime.GOOS+"/"+runtime.GOARCH),
-		widget.NewLabel("Host: "+host),
-		widget.NewLabel("Exe: "+exe),
-		widget.NewButton("Quit", a.Quit),
-	))
-	w.Resize(fyne.NewSize(600, 300))
-	w.ShowAndRun()
+// App ties the GUI, the profiles, and the running backend together.
+type App struct {
+	fy       fyne.App
+	ui       *UI
+	profiles *Profiles
+	bridge   *localAPIBridge
+	logs     *logSink
+
+	mu       sync.Mutex
+	backend  *Backend
+	profName string
+}
+
+func main() {
+	flag.Parse()
+	logs := newLogSink()
+	log.SetOutput(logs)
+	log.SetFlags(0)
+	logf := logs.Logf
+
+	root := *stateDir
+	if root == "" {
+		var err error
+		root, err = exeStateDir()
+		if err != nil {
+			fatal(logf, "finding state directory: %v", err)
+		}
+	}
+	profiles := &Profiles{Root: root}
+	if _, err := profiles.List(); err != nil {
+		fatal(logf, "state directory %s: %v", root, err)
+	}
+
+	bridge, err := newLocalAPIBridge(root, logf)
+	if err != nil {
+		if errors.Is(err, ErrAlreadyRunning) {
+			fatal(logf, "%v", err)
+		}
+		fatal(logf, "LocalAPI socket: %v", err)
+	}
+	defer bridge.Close()
+
+	a := &App{
+		fy:       app.NewWithID("com.github.bradfitz.tswipoexp"),
+		profiles: profiles,
+		bridge:   bridge,
+		logs:     logs,
+	}
+	a.ui = newUI(a)
+
+	name := *profile
+	if name == "" {
+		name, err = profiles.Active()
+		if err != nil {
+			fatal(logf, "active profile: %v", err)
+		}
+	}
+	if err := a.startBackend(name); err != nil {
+		logf("starting profile %q: %v", name, err)
+		a.ui.showErr(err)
+	}
+
+	if *debugAddr != "" {
+		if err := a.serveDebug(*debugAddr); err != nil {
+			fatal(logf, "debug endpoint: %v", err)
+		}
+	}
+
+	a.ui.refresh()
+	a.ui.win.ShowAndRun()
+	a.stopBackend()
+}
+
+// fatal logs and exits. Since the GUI binary has no console on
+// Windows, the message also goes to the log file if one is open.
+func fatal(logf func(string, ...any), format string, args ...any) {
+	logf(format, args...)
+	fmt.Fprintf(os.Stderr, format+"\n", args...)
+	os.Exit(1)
+}
+
+func (a *App) logf(format string, args ...any) { a.logs.Logf(format, args...) }
+
+// currentProfile returns the name of the loaded profile, or "".
+func (a *App) currentProfile() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.profName
+}
+
+// startBackend loads and starts the named profile. Any previously
+// running backend must already be stopped.
+func (a *App) startBackend(name string) error {
+	cfg, err := a.profiles.LoadConfig(name)
+	if err != nil {
+		return err
+	}
+	dir := a.profiles.Dir(name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	if err := a.logs.SetFile(dir); err != nil {
+		a.logf("opening log file: %v", err)
+	}
+	if err := a.profiles.SetActive(name); err != nil {
+		a.logf("recording active profile: %v", err)
+	}
+	a.logf("starting profile %q in %s", name, dir)
+
+	b := NewBackend(name, dir, cfg, a.logf)
+	b.OnChange = a.ui.scheduleRefresh
+	a.mu.Lock()
+	a.backend = b
+	a.profName = name
+	a.mu.Unlock()
+
+	if err := b.Start(""); err != nil {
+		a.mu.Lock()
+		a.backend = nil
+		a.mu.Unlock()
+		b.Close()
+		return err
+	}
+	if err := a.bridge.SetTarget(b); err != nil {
+		a.logf("LocalAPI bridge: %v", err)
+	}
+	a.ui.scheduleRefresh()
+	return nil
+}
+
+// stopBackend shuts down the running backend, if any.
+func (a *App) stopBackend() {
+	a.mu.Lock()
+	b := a.backend
+	a.backend = nil
+	a.mu.Unlock()
+	if b == nil {
+		return
+	}
+	a.bridge.SetTarget(nil)
+	a.logf("stopping profile %q", b.Profile())
+	if err := b.Close(); err != nil {
+		a.logf("closing backend: %v", err)
+	}
+}
+
+// switchProfile stops the current profile and starts another. It
+// runs on the UI goroutine but does the work in the background.
+func (a *App) switchProfile(name string) {
+	a.ui.stateLabel.SetText("State: switching to profile " + name)
+	go func() {
+		a.stopBackend()
+		err := a.startBackend(name)
+		fyne.Do(func() {
+			if err != nil {
+				a.ui.showErr(err)
+			}
+			a.ui.refresh()
+		})
+	}()
+}
+
+// setHostname updates the profile's hostname setting and applies it
+// to the running node.
+func (a *App) setHostname(name string, sync bool) {
+	a.mu.Lock()
+	b := a.backend
+	a.mu.Unlock()
+	if b == nil {
+		return
+	}
+	cfg := b.Config()
+	cfg.SyncHostname = sync
+	if !sync && name != "" {
+		cfg.Hostname = name
+	}
+	if err := a.profiles.SaveConfig(b.Profile(), cfg); err != nil {
+		a.ui.showErr(err)
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := b.SetHostname(ctx, cfg.hostname()); err != nil {
+			a.ui.showErrAsync(err)
+		}
+	}()
+}
+
+// prefs returns the running node's preferences, or nil.
+func (a *App) prefs() *ipn.Prefs {
+	a.mu.Lock()
+	b := a.backend
+	a.mu.Unlock()
+	if b == nil || b.LocalClient() == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	p, err := b.Prefs(ctx)
+	if err != nil {
+		return nil
+	}
+	return p
+}
+
+// quit shuts down cleanly. Proxy registration and the like are undone
+// by stopBackend.
+func (a *App) quit() {
+	a.logf("quitting")
+	go func() {
+		a.stopBackend()
+		fyne.Do(a.fy.Quit)
+	}()
 }
