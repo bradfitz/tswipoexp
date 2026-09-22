@@ -210,6 +210,9 @@ func (u *UI) build() {
 	u.reg("connect", u.connectBtn)
 
 	u.outbound = widget.NewCheck("Outbound access: use this node as the Windows system proxy while running", func(on bool) {
+		// Update the look right away; the Windows registration
+		// work behind setOutboundEnabled takes a moment.
+		u.setOutboundLook(on)
 		a.setOutboundEnabled(on)
 	})
 	u.reg("outbound", u.outbound)
@@ -538,19 +541,7 @@ func (u *UI) refresh() {
 	if u.outbound.Checked != cfg.registerProxy() {
 		u.outbound.SetChecked(cfg.registerProxy())
 	}
-	// The proxy line and exit node picker only matter when the node
-	// is the system proxy, so gray them out otherwise.
-	if cfg.registerProxy() {
-		u.proxyLabel.Importance = widget.MediumImportance
-		u.exitNodeLabel.Importance = widget.MediumImportance
-		u.exitNode.Enable()
-	} else {
-		u.proxyLabel.Importance = widget.LowImportance
-		u.exitNodeLabel.Importance = widget.LowImportance
-		u.exitNode.Disable()
-	}
-	u.proxyLabel.Refresh()
-	u.exitNodeLabel.Refresh()
+	u.setOutboundLook(cfg.registerProxy())
 	u.refreshExitNodes(st, prefs)
 
 	u.peers = peerRows(st)
@@ -789,6 +780,24 @@ func (u *UI) showNewProfileDialog() {
 	d.SetOnClosed(func() { u.newProfileDialog = nil })
 	d.Resize(fyne.NewSize(520, 200))
 	d.Show()
+}
+
+// setOutboundLook grays out the proxy line and exit node picker when
+// the node isn't the system proxy, since neither applies then.
+func (u *UI) setOutboundLook(on bool) {
+	imp := widget.LowImportance
+	if on {
+		imp = widget.MediumImportance
+		u.exitNode.Enable()
+	} else {
+		u.exitNode.Disable()
+	}
+	if u.proxyLabel.Importance != imp {
+		u.proxyLabel.Importance = imp
+		u.proxyLabel.Refresh()
+		u.exitNodeLabel.Importance = imp
+		u.exitNodeLabel.Refresh()
+	}
 }
 
 // indent pushes a row right, for rows that belong to the checkbox
