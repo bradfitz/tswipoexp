@@ -298,7 +298,9 @@ func (u *UI) build() {
 		func() fyne.CanvasObject {
 			// Each cell holds both a plain label and a copyable
 			// text; the column decides which one shows.
-			return container.NewStack(widget.NewLabel(""), container.NewCenter(newCopyText("", u.peersHint, a.fy.Clipboard())))
+			// The HBox keeps the copyable text left-aligned like the
+			// label; a Center would put it mid-cell.
+			return container.NewStack(widget.NewLabel(""), container.NewHBox(newCopyText("", u.peersHint, a.fy.Clipboard())))
 		},
 		func(id widget.TableCellID, o fyne.CanvasObject) {
 			stack := o.(*fyne.Container)
@@ -331,7 +333,7 @@ func (u *UI) build() {
 	u.peersTable.UpdateHeader = func(id widget.TableCellID, o fyne.CanvasObject) {
 		o.(*widget.Label).SetText(u.peersHeader[id.Col])
 	}
-	for i, w := range []float32{270, 130, 80, 70, 200} {
+	for i, w := range []float32{310, 150, 80, 70, 200} {
 		u.peersTable.SetColumnWidth(i, w)
 	}
 	u.reg("peers", u.peersTable)
