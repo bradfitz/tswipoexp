@@ -27,6 +27,10 @@ type proxyRegistration struct {
 	RunOnce  bool   // register a RunOnce entry that restores at logon
 }
 
+// runOnceValueName is the per-user RunOnce entry that runs the restore
+// script at the next logon.
+const runOnceValueName = "tswipoexp-restore-proxy"
+
 // pacPath is where the proxy's HTTP side serves the PAC script.
 const pacPath = "/proxy.pac"
 

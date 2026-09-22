@@ -192,7 +192,6 @@ func unregisterSystemProxy(logf func(string, ...any)) error {
 
 const (
 	runOnceKey       = `Software\Microsoft\Windows\CurrentVersion\RunOnce`
-	runOnceValueName = "tswipoexp-restore-proxy"
 	crashRestoreCmd  = "restore-proxy.cmd"
 	crashRestoreReg  = "restore-proxy.reg"
 	connectionsKey   = `Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections`

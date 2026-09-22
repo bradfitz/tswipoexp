@@ -79,15 +79,19 @@ func regEscape(s string) string {
 	return strings.ReplaceAll(s, `"`, `\"`)
 }
 
-// restoreCmdFile renders the batch file RunOnce executes. It imports
-// the .reg file next to it, then removes both files. %~dp0 is the
+// restoreCmdFile renders the batch file the watchdog and RunOnce
+// execute. It imports the .reg file next to it, then removes the
+// RunOnce entry, the JSON snapshot (the settings are back, so the
+// next start has nothing to restore), and both files. %~dp0 is the
 // script's own directory.
 func restoreCmdFile(regName string) string {
 	return "@echo off\r\n" +
 		"rem Written by tswipoexp before it registered itself as this user's proxy.\r\n" +
 		"rem If you're seeing this, tswipoexp didn't get to exit cleanly; this puts\r\n" +
-		"rem the previous proxy settings back. It runs once at logon and removes itself.\r\n" +
+		"rem the previous proxy settings back. It runs once and removes itself.\r\n" +
 		"reg import \"%~dp0" + regName + "\" >nul 2>&1\r\n" +
+		"reg delete \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce\" /v " + runOnceValueName + " /f >nul 2>&1\r\n" +
+		"del \"%~dp0" + proxyRestoreFile + "\" >nul 2>&1\r\n" +
 		"del \"%~dp0" + regName + "\" >nul 2>&1\r\n" +
 		// The (goto) trick ends the batch file without cmd trying
 		// to read the next line from the file it just deleted,

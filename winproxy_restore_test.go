@@ -40,7 +40,8 @@ func TestRestoreRegFile(t *testing.T) {
 
 func TestRestoreCmdFile(t *testing.T) {
 	got := restoreCmdFile("restore.reg")
-	if !strings.Contains(got, `reg import "%~dp0restore.reg"`) || !strings.Contains(got, `(goto) 2>nul & del "%~f0"`) {
+	if !strings.Contains(got, `reg import "%~dp0restore.reg"`) || !strings.Contains(got, `(goto) 2>nul & del "%~f0"`) ||
+		!strings.Contains(got, `/v tswipoexp-restore-proxy /f`) || !strings.Contains(got, `del "%~dp0proxy-restore.json"`) {
 		t.Errorf("unexpected cmd:\n%s", got)
 	}
 }
