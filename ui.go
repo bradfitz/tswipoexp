@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
@@ -312,8 +313,44 @@ func (u *UI) build() {
 	)
 	bottom := container.NewHBox(quitBtn)
 	u.win.SetContent(container.NewBorder(top, bottom, nil, nil, u.peersTable))
-	u.win.Resize(fyne.NewSize(760, 720))
-	u.win.SetCloseIntercept(a.quit)
+	size := defaultWindowSize
+	if gs := loadGUIState(a.profiles.Root); gs.WindowWidth > 200 && gs.WindowHeight > 200 {
+		size = fyne.NewSize(gs.WindowWidth, gs.WindowHeight)
+	}
+	u.win.Resize(size)
+	u.win.SetIcon(appIcon)
+
+	// With a tray icon, closing the window just hides it; the node
+	// keeps running. Quit is in the tray menu and the window.
+	if desk, ok := a.fy.(desktop.App); ok {
+		desk.SetSystemTrayIcon(appIcon)
+		desk.SetSystemTrayMenu(fyne.NewMenu("tswipoexp",
+			fyne.NewMenuItem("Open tswipoexp", func() {
+				u.win.Show()
+				u.win.RequestFocus()
+			}),
+			fyne.NewMenuItemSeparator(),
+			fyne.NewMenuItem("Quit", a.quit),
+		))
+		u.win.SetCloseIntercept(func() {
+			u.saveWindowSize()
+			u.win.Hide()
+		})
+	} else {
+		u.win.SetCloseIntercept(a.quit)
+	}
+}
+
+// saveWindowSize records the window size for next time. It must run
+// on the UI goroutine.
+func (u *UI) saveWindowSize() {
+	sz := u.win.Canvas().Size()
+	if sz.Width < 200 || sz.Height < 200 {
+		return
+	}
+	if err := saveGUIState(u.app.profiles.Root, guiState{WindowWidth: sz.Width, WindowHeight: sz.Height}); err != nil {
+		u.app.logf("saving window size: %v", err)
+	}
 }
 
 func (u *UI) openURL(s string) {

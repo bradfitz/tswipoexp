@@ -279,6 +279,7 @@ func (a *App) prefs() *ipn.Prefs {
 // by stopBackend.
 func (a *App) quit() {
 	a.logf("quitting")
+	a.ui.saveWindowSize()
 	go func() {
 		a.stopBackend()
 		fyne.Do(a.fy.Quit)

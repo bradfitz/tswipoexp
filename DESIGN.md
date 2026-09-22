@@ -198,6 +198,14 @@ While the node is not Running, the proxy dials directly instead of
 failing, so the user's browsing keeps working with the proxy still
 registered; only tailnet names fail.
 
+### Tray icon and window state
+
+The app has a tray icon with Open and Quit. Closing the window hides
+it and the node keeps running; Quit (window or tray) stops everything
+and restores the proxy settings. The window size is remembered in
+tswipoexp-state/gui.json rather than Fyne's Preferences, which would
+write to the host user's app data.
+
 ### Logging
 
 Each profile has a tswipoexp.log next to its tsnet state. tsnet's
@@ -290,5 +298,6 @@ Next:
 
 6. Exit nodes: picker in the GUI (done and tested).
 7. Inbound: SSH (opt-in), done.
-8. Polish: browser login flow verified end to end, profile switching
-   verified, tray icon, remembering window size.
+8. Polish: tray icon and remembered window size (done); profile
+   switching verified; browser login URL verified (the actual browser
+   login step needs a human).

@@ -56,3 +56,38 @@ func TestProfiles(t *testing.T) {
 		t.Errorf("reloaded config wrong: %+v", c2)
 	}
 }
+
+func TestValidProfileName(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		ok   bool
+	}{
+		{"Work", true},
+		{"Home 2", true},
+		{"", false},
+		{" lead", false},
+		{".hidden", false},
+		{`a\b`, false},
+		{"a/b", false},
+		{"a:b", false},
+		{"a*b", false},
+	} {
+		if got := validProfileName(tc.name); got != tc.ok {
+			t.Errorf("validProfileName(%q) = %v; want %v", tc.name, got, tc.ok)
+		}
+	}
+}
+
+func TestGUIState(t *testing.T) {
+	root := t.TempDir()
+	if s := loadGUIState(root); s.WindowWidth != 0 {
+		t.Fatalf("missing file yielded %+v", s)
+	}
+	if err := saveGUIState(root, guiState{WindowWidth: 640, WindowHeight: 480}); err != nil {
+		t.Fatal(err)
+	}
+	s := loadGUIState(root)
+	if s.WindowWidth != 640 || s.WindowHeight != 480 {
+		t.Errorf("reloaded %+v", s)
+	}
+}
