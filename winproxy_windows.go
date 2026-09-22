@@ -191,10 +191,10 @@ func unregisterSystemProxy(logf func(string, ...any)) error {
 }
 
 const (
-	runOnceKey       = `Software\Microsoft\Windows\CurrentVersion\RunOnce`
-	crashRestoreCmd  = "restore-proxy.cmd"
-	crashRestoreReg  = "restore-proxy.reg"
-	connectionsKey   = `Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections`
+	runOnceKey      = `Software\Microsoft\Windows\CurrentVersion\RunOnce`
+	crashRestoreCmd = "restore-proxy.cmd"
+	crashRestoreReg = "restore-proxy.reg"
+	connectionsKey  = `Software\Microsoft\Windows\CurrentVersion\Internet Settings\Connections`
 )
 
 func (s *savedProxySettings) isThisMachine() bool {
