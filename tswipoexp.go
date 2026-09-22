@@ -207,7 +207,8 @@ func (a *App) setRegisterProxy(on bool) {
 	a.mu.Lock()
 	b := a.backend
 	a.mu.Unlock()
-	if b == nil {
+	if b == nil || b.Config().registerProxy() == on {
+		// Programmatic checkbox updates fire the callback too.
 		return
 	}
 	if err := b.SetRegisterProxy(on); err != nil {
@@ -225,7 +226,7 @@ func (a *App) setSSH(on bool) {
 	a.mu.Lock()
 	b := a.backend
 	a.mu.Unlock()
-	if b == nil {
+	if b == nil || b.Config().SSH == on {
 		return
 	}
 	if err := b.SetSSH(on); err != nil {

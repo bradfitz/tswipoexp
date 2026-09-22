@@ -40,7 +40,7 @@ func TestRestoreRegFile(t *testing.T) {
 
 func TestRestoreCmdFile(t *testing.T) {
 	got := restoreCmdFile("restore.reg")
-	if !strings.Contains(got, `reg import "%~dp0restore.reg"`) || !strings.Contains(got, `del "%~f0"`) {
+	if !strings.Contains(got, `reg import "%~dp0restore.reg"`) || !strings.Contains(got, `(goto) 2>nul & del "%~f0"`) {
 		t.Errorf("unexpected cmd:\n%s", got)
 	}
 }

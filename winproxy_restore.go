@@ -89,5 +89,8 @@ func restoreCmdFile(regName string) string {
 		"rem the previous proxy settings back. It runs once at logon and removes itself.\r\n" +
 		"reg import \"%~dp0" + regName + "\" >nul 2>&1\r\n" +
 		"del \"%~dp0" + regName + "\" >nul 2>&1\r\n" +
-		"del \"%~f0\" >nul 2>&1\r\n"
+		// The (goto) trick ends the batch file without cmd trying
+		// to read the next line from the file it just deleted,
+		// which otherwise prints "The batch file cannot be found."
+		"(goto) 2>nul & del \"%~f0\"\r\n"
 }
