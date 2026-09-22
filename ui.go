@@ -54,6 +54,7 @@ type UI struct {
 	outboundDialog *dialog.ConfirmDialog
 	inboundDialog  *dialog.ConfirmDialog
 	exitNode       *widget.Select
+	exitNodeLabel  *widget.Label
 	exitNodeIDs    map[string]tailcfg.StableNodeID // select option label to node
 	peersLabel     *widget.Label
 	peersTable     *widget.Table
@@ -255,6 +256,7 @@ func (u *UI) build() {
 	})
 	u.exitNode.PlaceHolder = exitNodeNone
 	u.reg("exitNode", u.exitNode)
+	u.exitNodeLabel = widget.NewLabel("Exit node:")
 
 	hostBtn := widget.NewButton("Edit...", u.showHostnameDialog)
 	u.reg("editHostname", hostBtn)
@@ -299,12 +301,13 @@ func (u *UI) build() {
 		u.ipsLabel,
 		u.userLabel,
 		container.NewBorder(nil, nil, nil, hostBtn, u.hostLabel),
-		u.proxyLabel,
-		u.errLabel,
-		container.NewBorder(nil, nil, nil, outboundBtn, u.outbound),
-		container.NewBorder(nil, nil, nil, inboundBtn, u.inbound),
-		container.NewBorder(nil, nil, widget.NewLabel("Exit node:"), nil, u.exitNode),
 		container.NewBorder(nil, nil, nil, peersBtn, u.peersLabel),
+		u.errLabel,
+		widget.NewSeparator(),
+		container.NewBorder(nil, nil, nil, outboundBtn, u.outbound),
+		indent(u.proxyLabel),
+		indent(container.NewBorder(nil, nil, u.exitNodeLabel, nil, u.exitNode)),
+		container.NewBorder(nil, nil, nil, inboundBtn, u.inbound),
 	)
 	bottom := container.NewBorder(nil, nil, quitBtn, nil, closeHint)
 	u.win.SetContent(container.NewBorder(top, bottom, nil, nil, layout.NewSpacer()))
@@ -535,6 +538,19 @@ func (u *UI) refresh() {
 	if u.outbound.Checked != cfg.registerProxy() {
 		u.outbound.SetChecked(cfg.registerProxy())
 	}
+	// The proxy line and exit node picker only matter when the node
+	// is the system proxy, so gray them out otherwise.
+	if cfg.registerProxy() {
+		u.proxyLabel.Importance = widget.MediumImportance
+		u.exitNodeLabel.Importance = widget.MediumImportance
+		u.exitNode.Enable()
+	} else {
+		u.proxyLabel.Importance = widget.LowImportance
+		u.exitNodeLabel.Importance = widget.LowImportance
+		u.exitNode.Disable()
+	}
+	u.proxyLabel.Refresh()
+	u.exitNodeLabel.Refresh()
 	u.refreshExitNodes(st, prefs)
 
 	u.peers = peerRows(st)
@@ -773,4 +789,10 @@ func (u *UI) showNewProfileDialog() {
 	d.SetOnClosed(func() { u.newProfileDialog = nil })
 	d.Resize(fyne.NewSize(520, 200))
 	d.Show()
+}
+
+// indent pushes a row right, for rows that belong to the checkbox
+// above them.
+func indent(o fyne.CanvasObject) fyne.CanvasObject {
+	return container.NewBorder(nil, nil, container.NewGridWrap(fyne.NewSize(28, 1)), nil, o)
 }

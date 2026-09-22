@@ -16,6 +16,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"tailscale.com/hostinfo"
 	"tailscale.com/ipn"
 )
 
@@ -40,6 +41,9 @@ type App struct {
 
 func main() {
 	flag.Parse()
+	// Identify this client to control (shows up in the admin console
+	// and in tailscale status as the app).
+	hostinfo.SetApp("tswipoexp")
 	logs := newLogSink()
 	log.SetOutput(logs)
 	log.SetFlags(0)
