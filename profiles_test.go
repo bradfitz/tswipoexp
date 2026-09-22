@@ -91,3 +91,20 @@ func TestGUIState(t *testing.T) {
 		t.Errorf("reloaded %+v", s)
 	}
 }
+
+func TestSSHMode(t *testing.T) {
+	for _, tc := range []struct {
+		cfg  Config
+		want string
+	}{
+		{Config{}, sshOff},
+		{Config{SSH: true}, sshSameUser},
+		{Config{SSHMode: sshOff, SSH: true}, sshOff},
+		{Config{SSHMode: sshAllUsers}, sshAllUsers},
+		{Config{SSHMode: "bogus"}, sshOff},
+	} {
+		if got := tc.cfg.sshMode(); got != tc.want {
+			t.Errorf("%+v: sshMode = %q; want %q", tc.cfg, got, tc.want)
+		}
+	}
+}

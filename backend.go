@@ -96,7 +96,7 @@ func (b *Backend) Start(authKey string) error {
 	go b.watchIPNBus()
 	go b.pollStatus()
 
-	if b.cfg.SSH {
+	if b.cfg.sshMode() != sshOff {
 		if err := b.startSSH(); err != nil {
 			b.setErr("ssh: %v", err)
 		}
@@ -139,6 +139,7 @@ func (b *Backend) startSSH() error {
 		lc:   b.lc,
 		dir:  b.dir,
 		ln:   ln,
+		mode: func() string { return b.cfg.sshMode() },
 		selfID: func() (string, bool) {
 			st := b.Status()
 			if st == nil || st.Self == nil {
@@ -169,10 +170,13 @@ func (b *Backend) stopSSH() {
 	}
 }
 
-// SetSSH turns the SSH server on or off and records the choice.
-func (b *Backend) SetSSH(on bool) error {
-	b.cfg.SSH = on
-	if !on {
+// SetSSHMode changes the SSH mode and starts or stops the server to
+// match. The mode is read live by a running server, so switching
+// between the two "on" modes needs no restart.
+func (b *Backend) SetSSHMode(mode string) error {
+	b.cfg.SSHMode = mode
+	b.cfg.SSH = false
+	if mode == sshOff {
 		b.stopSSH()
 		return nil
 	}

@@ -82,10 +82,36 @@ type Config struct {
 	// Defaults to on.
 	RunOnceRestore *bool `json:",omitempty"`
 
-	// SSH, if true, runs an SSH server on the tailnet that gives
-	// peers owned by the same tailnet user a shell as the current
-	// Windows user. Off by default.
+	// SSHMode controls the SSH server: sshOff (the default), sshSameUser
+	// (peers owned by the same tailnet login as this node get a shell
+	// as the current Windows user), or sshAllUsers (any peer the
+	// tailnet's ACLs let reach port 22).
+	SSHMode string `json:",omitempty"`
+
+	// SSH is the pre-SSHMode setting: true meant sshSameUser. It's
+	// read for compatibility and no longer written.
 	SSH bool `json:",omitempty"`
+}
+
+// SSHMode values.
+const (
+	sshOff      = "off"
+	sshSameUser = "same-user"
+	sshAllUsers = "all"
+)
+
+// sshMode returns the effective SSH mode, honoring the old boolean.
+func (c *Config) sshMode() string {
+	switch c.SSHMode {
+	case sshSameUser, sshAllUsers:
+		return c.SSHMode
+	case sshOff:
+		return sshOff
+	}
+	if c.SSH {
+		return sshSameUser
+	}
+	return sshOff
 }
 
 func (c *Config) hostname() string {

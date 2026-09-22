@@ -155,25 +155,45 @@ func (u *UI) showInboundSettings() {
 	}
 	cfg := *b.Config()
 
-	sshCheck := widget.NewCheck("SSH server: let my other tailnet devices open a PowerShell session as this Windows user", nil)
-	sshCheck.SetChecked(cfg.SSH)
-	u.reg("inbound.ssh", sshCheck)
+	login := ""
+	if st := b.Status(); st != nil && st.Self != nil {
+		if up, ok := st.User[st.Self.UserID]; ok {
+			login = up.LoginName
+		}
+	}
+	sameUser := "On for same user only"
+	if login != "" {
+		sameUser = fmt.Sprintf("On for same user only (%s)", login)
+	}
+	options := []string{"Off", sameUser, "On for all users (if TCP port 22 is reachable per tailnet policy)"}
+	modes := []string{sshOff, sshSameUser, sshAllUsers}
+	sshSel := widget.NewSelect(options, nil)
+	for i, m := range modes {
+		if m == cfg.sshMode() {
+			sshSel.SetSelected(options[i])
+		}
+	}
+	u.reg("inbound.ssh", sshSel)
 
 	content := container.NewVBox(
 		widget.NewLabel("These apply while \"Inbound access\" is checked in the main window."),
 		widget.NewSeparator(),
-		sshCheck,
-		widget.NewLabel("Only devices signed in to the same tailnet account as this node are accepted."),
+		container.NewBorder(nil, nil, widget.NewLabel("Allow incoming SSH:"), nil, sshSel),
+		widget.NewLabel("Sessions run PowerShell as this Windows user. \"Same user\" accepts only devices signed in\nto the same tailnet account as this node; \"all users\" accepts any device the tailnet's ACLs\nallow to reach port 22."),
 	)
 	d := dialog.NewCustomConfirm("Inbound access settings", "Save", "Cancel", content, func(ok bool) {
 		defer u.unregDialogWidgets("inbound.")
 		if !ok {
 			return
 		}
-		a.setSSH(sshCheck.Checked)
+		for i, opt := range options {
+			if opt == sshSel.Selected {
+				a.setSSHMode(modes[i])
+			}
+		}
 	}, u.win)
 	u.inboundDialog = d
 	d.SetOnClosed(func() { u.inboundDialog = nil })
-	d.Resize(fyne.NewSize(620, 260))
+	d.Resize(fyne.NewSize(680, 280))
 	d.Show()
 }

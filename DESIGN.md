@@ -305,26 +305,35 @@ one, and only matters for the test target.
 ### SSH
 
 Tailscale's own SSH server doesn't build on Windows, so tswipoexp
-follows tailcat's approach instead. A per-profile opt-in (off by
-default) runs a gliderssh server on the node's tailnet addresses at
-port 22 via tsnet's Listen. Authorization is by tunnel identity:
-WhoIs on the peer address must return the same tailnet login as this
-node's owner; there is no SSH-level client authentication and tagged
-or other users' devices are refused. Sessions run PowerShell as the
+follows tailcat's approach instead. A per-profile setting (off by
+default) in the Inbound access dialog runs a gliderssh server on the
+node's tailnet addresses at port 22 via tsnet's Listen. The modes:
+
+* Off (default).
+* On for same user only: WhoIs on the peer address must return the
+  same tailnet login as this node's owner.
+* On for all users: any peer that can reach port 22 is accepted;
+  reachability is left to the tailnet's ACLs.
+
+There is no SSH-level client authentication in either mode; identity
+comes from the tunnel. Sessions run PowerShell as the
 current Windows user, over ConPTY when the client asks for a PTY
 (code adapted from tailcat). The ed25519 host key lives in the profile
 directory so it roams with the profile. No SFTP, no port forwarding.
 
-Tailscale SSH ACL rules from the tailnet policy are not consulted;
-that's an open question below. cmd/devssh is a tsnet SSH client for
+The tailnet's Tailscale SSH policy is not consulted. Control does
+send it in the netmap (even without RunSSH), so a policy mode is
+possible, but the default policy uses check mode (holdAndDelegate),
+which needs a Noise round trip to control that tsnet doesn't expose.
+Deferred; see the open question below. cmd/devssh is a tsnet SSH client for
 testing this from Linux.
 
 ## Open questions
 
-* SSH authorization ignores the tailnet's SSH ACL rules and uses
-  "same user" only. Options: honor the SSH rules from the netmap (not
-  exposed by tsnet today), or add an allowlist of users/tags in the
-  profile config.
+* An "as configured in tailnet policy" SSH mode would need check
+  mode support: either treat holdAndDelegate as reject, or add a
+  LocalAPI endpoint upstream that performs the SSH action fetch over
+  Noise for tsnet apps.
 
 * Windows Firewall: I expected a prompt when tsnet first bound UDP,
   but none appeared on the test laptop and direct connections worked

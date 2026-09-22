@@ -45,6 +45,7 @@ type sshServer struct {
 	lc     *local.Client
 	dir    string // profile directory, for the host key
 	selfID func() (login string, ok bool)
+	mode   func() string // current sshMode, read per connection
 
 	ln     net.Listener
 	closed atomic.Bool
@@ -88,9 +89,19 @@ func (s *sshServer) handleConn(c net.Conn) {
 	if who.UserProfile != nil {
 		peerLogin = who.UserProfile.LoginName
 	}
-	selfLogin, ok := s.selfID()
-	if !ok || peerLogin == "" || peerLogin != selfLogin {
-		s.logf("ssh: rejecting %v (%s, user %q): not the same tailnet user as this node (%q)", c.RemoteAddr(), who.Node.Name, peerLogin, selfLogin)
+	switch mode := s.mode(); mode {
+	case sshAllUsers:
+		// Reachability is the tailnet ACL's decision; anyone who
+		// can open the connection is let in.
+	case sshSameUser:
+		selfLogin, ok := s.selfID()
+		if !ok || peerLogin == "" || peerLogin != selfLogin {
+			s.logf("ssh: rejecting %v (%s, user %q): not the same tailnet user as this node (%q)", c.RemoteAddr(), who.Node.Name, peerLogin, selfLogin)
+			c.Close()
+			return
+		}
+	default:
+		s.logf("ssh: rejecting %v: SSH is %s", c.RemoteAddr(), mode)
 		c.Close()
 		return
 	}

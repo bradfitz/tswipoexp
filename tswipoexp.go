@@ -290,16 +290,16 @@ func (a *App) deleteProfile(name string) error {
 	return a.profiles.Delete(name)
 }
 
-// setSSH toggles the SSH server for the current profile and saves
+// setSSHMode changes the SSH mode for the current profile and saves
 // the choice.
-func (a *App) setSSH(on bool) {
+func (a *App) setSSHMode(mode string) {
 	a.mu.Lock()
 	b := a.backend
 	a.mu.Unlock()
-	if b == nil || b.Config().SSH == on {
+	if b == nil || b.Config().sshMode() == mode {
 		return
 	}
-	if err := b.SetSSH(on); err != nil {
+	if err := b.SetSSHMode(mode); err != nil {
 		a.ui.showErr(err)
 	}
 	if err := a.profiles.SaveConfig(b.Profile(), b.Config()); err != nil {

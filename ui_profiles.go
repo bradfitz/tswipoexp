@@ -139,7 +139,7 @@ func (m *profileManager) showDetails() {
 	if cfg != nil {
 		b.WriteString("\nSettings:\n")
 		fmt.Fprintf(&b, "  Outbound access: %v (%s)\n", cfg.registerProxy(), cfg.proxyMode())
-		fmt.Fprintf(&b, "  SSH: %v\n", cfg.SSH)
+		fmt.Fprintf(&b, "  SSH: %s\n", cfg.sshMode())
 		if cfg.SyncHostname {
 			b.WriteString("  Hostname follows this computer's name\n")
 		}
