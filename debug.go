@@ -191,6 +191,10 @@ func (a *App) debugTap(w http.ResponseWriter, r *http.Request) {
 				d = a.ui.hostnameDialog
 			case "profile":
 				d = a.ui.newProfileDialog
+			case "rename":
+				d = a.ui.renameDialog
+			case "delete":
+				d = a.ui.deleteDialog
 			}
 			if d == nil {
 				err = fmt.Errorf("%s settings dialog is not open", prefix)
@@ -266,6 +270,16 @@ func (a *App) debugSet(w http.ResponseWriter, r *http.Request) {
 			err = fmt.Errorf("no option matching %q", text)
 		case *widget.Select:
 			v.SetSelected(text)
+		case *widget.List:
+			if a.ui.profileMgr != nil && a.ui.profileMgr.list == v {
+				for i, n := range a.ui.profileMgr.names {
+					if n == text {
+						v.Select(i)
+						return
+					}
+				}
+				err = fmt.Errorf("no profile named %q", text)
+			}
 		case *widget.Check:
 			v.SetChecked(strings.EqualFold(text, "true"))
 		default:

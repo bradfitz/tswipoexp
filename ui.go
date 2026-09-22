@@ -34,6 +34,9 @@ type UI struct {
 	widgets map[string]fyne.CanvasObject
 
 	profileSel       *widget.Select
+	profileMgr       *profileManager
+	renameDialog     *dialog.ConfirmDialog
+	deleteDialog     *dialog.ConfirmDialog
 	stateDot         *canvas.Circle
 	stateLabel       *widget.Label
 	newProfileDialog *dialog.ConfirmDialog
@@ -114,6 +117,8 @@ func (u *UI) build() {
 		}
 	})
 	u.reg("profile", u.profileSel)
+	manageBtn := widget.NewButton("Manage...", u.showProfileManager)
+	u.reg("manageProfiles", manageBtn)
 
 	// The state dot: a small circle whose color tracks the backend
 	// state. It sits in a fixed cell so the row's height matches the
@@ -344,7 +349,7 @@ func (u *UI) build() {
 	closeHint.TextStyle = fyne.TextStyle{Italic: true}
 
 	top := container.NewVBox(
-		container.NewBorder(nil, nil, widget.NewLabel("Profile:"), nil, u.profileSel),
+		container.NewBorder(nil, nil, widget.NewLabel("Profile:"), manageBtn, u.profileSel),
 		widget.NewSeparator(),
 		container.NewHBox(dotCell, u.stateLabel, u.loginBtn, u.authKeyCell, u.authKeyBtn, u.connectBtn, u.logoutBtn),
 		ipsRow,
@@ -476,6 +481,9 @@ func (u *UI) refresh() {
 	a := u.app
 	names, _ := a.profiles.List()
 	u.profileSel.Options = append(append([]string(nil), names...), newProfileItem)
+	if u.profileMgr != nil {
+		u.profileMgr.reload()
+	}
 	if cur := a.currentProfile(); u.profileSel.Selected != cur {
 		u.profileSel.SetSelected(cur)
 	} else {

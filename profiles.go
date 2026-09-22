@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // stateDirName is the name of the directory next to the executable
@@ -271,6 +272,69 @@ func (p *Profiles) SaveConfig(name string, c *Config) error {
 		return err
 	}
 	return writeFileAtomic(filepath.Join(p.Dir(name), configFileName), append(b, '\n'))
+}
+
+// lastStatusFile is the per-profile summary of the node's last known
+// state, kept so the profile manager can show details for profiles
+// that aren't running.
+const lastStatusFile = "last-status.json"
+
+// ProfileSummary is what the profile manager shows per profile.
+type ProfileSummary struct {
+	State     string    `json:",omitempty"`
+	Tailnet   string    `json:",omitempty"`
+	Account   string    `json:",omitempty"`
+	Hostname  string    `json:",omitempty"`
+	DNSName   string    `json:",omitempty"`
+	IPs       []string  `json:",omitempty"`
+	UpdatedAt time.Time `json:",omitempty"`
+}
+
+// LoadSummary reads a profile's last known summary; a missing file
+// yields the zero value.
+func (p *Profiles) LoadSummary(name string) ProfileSummary {
+	var s ProfileSummary
+	b, err := os.ReadFile(filepath.Join(p.Dir(name), lastStatusFile))
+	if err == nil {
+		json.Unmarshal(b, &s)
+	}
+	return s
+}
+
+// SaveSummary writes a profile's summary.
+func (p *Profiles) SaveSummary(name string, s ProfileSummary) error {
+	b, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(filepath.Join(p.Dir(name), lastStatusFile), append(b, '\n'))
+}
+
+// Rename renames a profile directory. The profile must not be
+// running; the caller handles stopping and restarting.
+func (p *Profiles) Rename(from, to string) error {
+	if !validProfileName(to) {
+		return fmt.Errorf("invalid profile name %q", to)
+	}
+	if _, err := os.Stat(p.Dir(to)); err == nil {
+		return fmt.Errorf("profile %q already exists", to)
+	}
+	if err := os.Rename(p.Dir(from), p.Dir(to)); err != nil {
+		return err
+	}
+	if active, _ := p.Active(); active == from || active == "" {
+		return p.SetActive(to)
+	}
+	return nil
+}
+
+// Delete removes a profile and all its state, including the node key.
+// The profile must not be running.
+func (p *Profiles) Delete(name string) error {
+	if !validProfileName(name) {
+		return fmt.Errorf("invalid profile name %q", name)
+	}
+	return os.RemoveAll(p.Dir(name))
 }
 
 // writeFileAtomic writes data to path via a temp file, fsync, and

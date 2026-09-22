@@ -154,6 +154,11 @@ func (a *App) startBackend(name string) error {
 
 	b := NewBackend(name, dir, cfg, a.logf)
 	b.OnChange = a.ui.scheduleRefresh
+	b.OnSummary = func(s ProfileSummary) {
+		if err := a.profiles.SaveSummary(name, s); err != nil {
+			a.logf("saving profile summary: %v", err)
+		}
+	}
 	a.mu.Lock()
 	a.backend = b
 	a.profName = name
@@ -244,6 +249,40 @@ func (a *App) applyOutbound(cfg Config, addrChanged bool) {
 		}
 		a.ui.scheduleRefresh()
 	}()
+}
+
+// renameProfile renames a profile, restarting it if it's the one
+// running. It runs on the UI goroutine and does the work in the
+// background.
+func (a *App) renameProfile(from, to string, done func(error)) {
+	go func() {
+		running := a.currentProfile() == from
+		if running {
+			a.stopBackend()
+		}
+		err := a.profiles.Rename(from, to)
+		if running {
+			name := to
+			if err != nil {
+				name = from
+			}
+			if serr := a.startBackend(name); serr != nil && err == nil {
+				err = serr
+			}
+		}
+		fyne.Do(func() {
+			a.ui.refresh()
+			done(err)
+		})
+	}()
+}
+
+// deleteProfile removes a profile that isn't running.
+func (a *App) deleteProfile(name string) error {
+	if a.currentProfile() == name {
+		return fmt.Errorf("switch to another profile before deleting %q", name)
+	}
+	return a.profiles.Delete(name)
 }
 
 // setSSH toggles the SSH server for the current profile and saves

@@ -37,6 +37,10 @@ type Backend struct {
 	// must not block for long.
 	OnChange func()
 
+	// OnSummary, if set, is called with a fresh summary whenever the
+	// last known details worth remembering change.
+	OnSummary func(ProfileSummary)
+
 	ts *tsnet.Server
 	lc *local.Client
 
@@ -46,13 +50,14 @@ type Backend struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	lastPAC  string // fingerprint of the last PAC inputs, to detect changes
-	status   *ipnstate.Status
-	authURL  string // most recent BrowseToURL from the IPN bus
-	lastErr  string // most recent error worth showing the user
-	closed   bool
-	closeErr error
+	mu          sync.Mutex
+	lastPAC     string // fingerprint of the last PAC inputs, to detect changes
+	lastSummary string // fingerprint of the last saved ProfileSummary
+	status      *ipnstate.Status
+	authURL     string // most recent BrowseToURL from the IPN bus
+	lastErr     string // most recent error worth showing the user
+	closed      bool
+	closeErr    error
 }
 
 // NewBackend prepares, but does not start, a backend for the profile
@@ -368,6 +373,11 @@ func (b *Backend) refreshStatus() {
 	if st.BackendState == ipn.Running.String() {
 		b.authURL = ""
 	}
+	summary := summarize(st)
+	summaryChanged := b.lastSummary != summary.key()
+	if summaryChanged {
+		b.lastSummary = summary.key()
+	}
 	pacChanged := false
 	if b.proxyLn != nil {
 		in := pacInputsFrom(st, b.cfg, b.ProxyAddr())
@@ -376,6 +386,10 @@ func (b *Backend) refreshStatus() {
 		b.lastPAC = key
 	}
 	b.mu.Unlock()
+	if summaryChanged && b.OnSummary != nil {
+		summary.UpdatedAt = time.Now()
+		b.OnSummary(summary)
+	}
 	if pacChanged && b.cfg.registerProxy() && b.cfg.proxyMode() == proxyModePAC {
 		// Browsers cache the script; tell WinINet settings changed
 		// so they fetch it again.
@@ -515,4 +529,28 @@ func logFilePath(dir string) string {
 // openLogFile opens (creating or appending) a profile's log file.
 func openLogFile(dir string) (*os.File, error) {
 	return os.OpenFile(logFilePath(dir), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+}
+
+// summarize extracts the profile summary from a status.
+func summarize(st *ipnstate.Status) ProfileSummary {
+	s := ProfileSummary{State: st.BackendState}
+	if st.CurrentTailnet != nil {
+		s.Tailnet = st.CurrentTailnet.Name
+	}
+	if st.Self != nil {
+		if up, ok := st.User[st.Self.UserID]; ok {
+			s.Account = up.LoginName
+		}
+		s.Hostname = st.Self.HostName
+		s.DNSName = strings.TrimSuffix(st.Self.DNSName, ".")
+	}
+	for _, ip := range st.TailscaleIPs {
+		s.IPs = append(s.IPs, ip.String())
+	}
+	return s
+}
+
+// key is a comparison fingerprint that ignores UpdatedAt.
+func (s ProfileSummary) key() string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%v", s.State, s.Tailnet, s.Account, s.Hostname, s.DNSName, s.IPs)
 }
