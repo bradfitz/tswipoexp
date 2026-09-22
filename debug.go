@@ -278,7 +278,26 @@ func (a *App) debugSet(w http.ResponseWriter, r *http.Request) {
 			}
 			err = fmt.Errorf("no option matching %q", text)
 		case *widget.Select:
-			v.SetSelected(text)
+			// Accept an exact option or a unique prefix of one.
+			var match string
+			for _, opt := range v.Options {
+				if opt == text {
+					match = opt
+					break
+				}
+				if strings.HasPrefix(opt, text) {
+					if match != "" {
+						err = fmt.Errorf("option prefix %q is ambiguous", text)
+						return
+					}
+					match = opt
+				}
+			}
+			if match == "" {
+				err = fmt.Errorf("no option matching %q", text)
+				return
+			}
+			v.SetSelected(match)
 		case *widget.List:
 			if a.ui.profileMgr != nil && a.ui.profileMgr.list == v {
 				for i, n := range a.ui.profileMgr.names {
