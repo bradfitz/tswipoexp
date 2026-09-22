@@ -13,12 +13,15 @@ import (
 	"path/filepath"
 	"time"
 
+	"tailscale.com/ipn"
+	"tailscale.com/net/tsaddr"
 	"tailscale.com/tsnet"
 )
 
 func main() {
 	hostname := flag.String("hostname", "tswipoexp-target", "tailnet hostname")
 	dir := flag.String("dir", "", "state directory; defaults to ~/.cache/tswipoexp-devtarget")
+	exitNode := flag.Bool("exit-node", false, "advertise as an exit node (needs approval in the admin console)")
 	flag.Parse()
 
 	if *dir == "" {
@@ -42,6 +45,20 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("devtarget up as %s %v", st.Self.DNSName, st.TailscaleIPs)
+	if *exitNode {
+		lc, err := s.LocalClient()
+		if err != nil {
+			log.Fatal(err)
+		}
+		_, err = lc.EditPrefs(context.Background(), &ipn.MaskedPrefs{
+			Prefs:              ipn.Prefs{AdvertiseRoutes: tsaddr.ExitRoutes()},
+			AdvertiseRoutesSet: true,
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("advertising exit node routes")
+	}
 	log.Fatal(http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		who, _ := s.LocalClient()
 		fmt.Fprintf(w, "hello from devtarget\n")

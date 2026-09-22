@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/tailcfg"
 )
 
 // UI is the main window and its widgets.
@@ -42,6 +43,8 @@ type UI struct {
 	connectBtn  *widget.Button
 	shieldsUp   *widget.Check
 	regProxy    *widget.Check
+	exitNode    *widget.Select
+	exitNodeIDs map[string]tailcfg.StableNodeID // select option label to node
 	hostEntry   *widget.Entry
 	hostBtn     *widget.Button
 	hostSync    *widget.Check
@@ -216,6 +219,27 @@ func (u *UI) build() {
 	})
 	u.reg("registerProxy", u.regProxy)
 
+	u.exitNodeIDs = map[string]tailcfg.StableNodeID{}
+	u.exitNode = widget.NewSelect([]string{exitNodeNone}, func(label string) {
+		b := a.backend
+		if b == nil || label == "" {
+			return
+		}
+		id := u.exitNodeIDs[label] // zero for exitNodeNone
+		if cur := a.prefs(); cur != nil && cur.ExitNodeID == id {
+			return
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := b.SetExitNode(ctx, id); err != nil {
+				u.showErrAsync(err)
+			}
+		}()
+	})
+	u.exitNode.PlaceHolder = exitNodeNone
+	u.reg("exitNode", u.exitNode)
+
 	u.hostEntry = widget.NewEntry()
 	u.hostEntry.SetPlaceHolder(defaultHostname)
 	u.reg("hostnameEntry", u.hostEntry)
@@ -274,6 +298,7 @@ func (u *UI) build() {
 		container.NewBorder(nil, nil, nil, u.authKeyBtn, u.authKey),
 		u.shieldsUp,
 		u.regProxy,
+		container.NewBorder(nil, nil, widget.NewLabel("Exit node:"), nil, u.exitNode),
 		container.NewBorder(nil, nil, widget.NewLabel("Hostname:"), container.NewHBox(u.hostBtn, u.hostSync), u.hostEntry),
 		widget.NewSeparator(),
 		widget.NewLabel("Peers"),
@@ -433,12 +458,67 @@ func (u *UI) refresh() {
 		}
 	}
 
-	if prefs := a.prefs(); prefs != nil && u.shieldsUp.Checked != prefs.ShieldsUp {
+	prefs := a.prefs()
+	if prefs != nil && u.shieldsUp.Checked != prefs.ShieldsUp {
 		u.shieldsUp.SetChecked(prefs.ShieldsUp)
 	}
+	u.refreshExitNodes(st, prefs)
 
 	u.peers = peerRows(st)
 	u.peersTable.Refresh()
+}
+
+// exitNodeNone is the exit node dropdown's entry for no exit node.
+const exitNodeNone = "None"
+
+// refreshExitNodes rebuilds the exit node dropdown from the peers
+// that offer to be one and selects the current choice.
+func (u *UI) refreshExitNodes(st *ipnstate.Status, prefs *ipn.Prefs) {
+	labels := []string{exitNodeNone}
+	ids := map[string]tailcfg.StableNodeID{}
+	selected := exitNodeNone
+	for _, p := range st.Peer {
+		if !p.ExitNodeOption {
+			continue
+		}
+		label := shortName(p)
+		if !p.Online {
+			label += " (offline)"
+		}
+		labels = append(labels, label)
+		ids[label] = p.ID
+		if prefs != nil && prefs.ExitNodeID == p.ID {
+			selected = label
+		}
+	}
+	sort.Strings(labels[1:])
+	if prefs != nil && selected == exitNodeNone && prefs.ExitNodeID != "" {
+		// Set to a node we don't see (yet); show its ID rather
+		// than pretend there's none.
+		selected = string(prefs.ExitNodeID)
+		labels = append(labels, selected)
+		ids[selected] = prefs.ExitNodeID
+	}
+	u.exitNodeIDs = ids
+	u.exitNode.Options = labels
+	if u.exitNode.Selected != selected {
+		u.exitNode.SetSelected(selected)
+	} else {
+		u.exitNode.Refresh()
+	}
+}
+
+// shortName returns a peer's first DNS label, falling back to its
+// hostname.
+func shortName(p *ipnstate.PeerStatus) string {
+	name := strings.TrimSuffix(p.DNSName, ".")
+	if i := strings.IndexByte(name, '.'); i > 0 {
+		name = name[:i]
+	}
+	if name == "" {
+		name = p.HostName
+	}
+	return name
 }
 
 // peerRows flattens a status into sorted table rows.
@@ -466,15 +546,11 @@ func peerRows(st *ipnstate.Status) []peerRow {
 		default:
 			path = "idle"
 		}
-		name := strings.TrimSuffix(p.DNSName, ".")
-		if i := strings.IndexByte(name, '.'); i > 0 {
-			name = name[:i]
-		}
-		if name == "" {
-			name = p.HostName
-		}
+		name := shortName(p)
 		if p.ExitNode {
 			name += " (exit node)"
+		} else if p.ExitNodeOption {
+			name += " (exit node option)"
 		}
 		rows = append(rows, peerRow{Name: name, IP: ip, OS: p.OS, Online: online, Path: path})
 	}

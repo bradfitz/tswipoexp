@@ -221,6 +221,15 @@ then StartLoginInteractive, which is what "tailscale up --authkey"
 does. Browser login shows the URL from the IPN bus behind a button
 rather than opening the browser unprompted.
 
+### Exit nodes
+
+The GUI has an exit node dropdown listing peers with the exit node
+option, plus None, applied via EditPrefs. It is implemented but not
+yet exercised: the test tailnet has no approved exit node.
+cmd/devtarget has an -exit-node flag that advertises the routes;
+approving tswipoexp-target as an exit node in the admin console is
+needed to test it (action item for Brad).
+
 ## Open questions
 
 * Should logtail uploads be disabled for a portable client?
@@ -251,7 +260,7 @@ Done:
 
 Next:
 
-6. Exit nodes: picker in the GUI.
+6. Exit nodes: picker in the GUI (done, untested pending route approval).
 7. Inbound: Tailscale SSH (opt-in).
 8. Polish: browser login flow verified end to end, profile switching
    verified, tray icon, remembering window size.

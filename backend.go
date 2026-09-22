@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/net/proxymux"
 	"tailscale.com/net/socks5"
+	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 	"tailscale.com/types/logger"
 )
@@ -72,7 +74,7 @@ func (b *Backend) Start(authKey string) error {
 		Dir:      b.dir,
 		Hostname: b.cfg.hostname(),
 		AuthKey:  authKey,
-		Logf:     logger.WithPrefix(b.logf, "tsnet: "),
+		Logf:     b.tsnetLogf,
 		UserLogf: b.logf,
 	}
 	if err := b.ts.Start(); err != nil {
@@ -114,6 +116,16 @@ func (b *Backend) SetRegisterProxy(on bool) error {
 // currently point at our proxy.
 func (b *Backend) ProxyRegistered() bool {
 	return b.ProxyAddr() != "" && systemProxyIsOurs(b.ProxyAddr())
+}
+
+// tsnetLogf is tsnet's logger. It drops tsnet's every-five-seconds
+// reminder about TS_AUTHKEY, which is meant for headless programs;
+// the GUI shows the login URL itself.
+func (b *Backend) tsnetLogf(format string, args ...any) {
+	if strings.HasPrefix(format, "To start this tsnet server") {
+		return
+	}
+	b.logf("tsnet: "+format, args...)
 }
 
 // Close shuts everything down. It's safe to call more than once.
@@ -323,6 +335,16 @@ func (b *Backend) SetShieldsUp(ctx context.Context, up bool) error {
 	_, err := b.lc.EditPrefs(ctx, &ipn.MaskedPrefs{
 		Prefs:        ipn.Prefs{ShieldsUp: up},
 		ShieldsUpSet: true,
+	})
+	return err
+}
+
+// SetExitNode routes all non-tailnet traffic through the given peer,
+// or clears the exit node if id is empty.
+func (b *Backend) SetExitNode(ctx context.Context, id tailcfg.StableNodeID) error {
+	_, err := b.lc.EditPrefs(ctx, &ipn.MaskedPrefs{
+		Prefs:         ipn.Prefs{ExitNodeID: id},
+		ExitNodeIDSet: true,
 	})
 	return err
 }
