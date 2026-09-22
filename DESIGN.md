@@ -124,11 +124,16 @@ These were made without discussion to keep moving. Revisit any of them.
   type; backend.go wraps one profile's tsnet node; profiles.go
   handles the state directory; ui.go is the Fyne window; debug.go is
   the debug endpoint; localapi.go bridges the LocalAPI to the named
-  pipe.
+  pipe; winproxy*.go registers the system proxy; ssh*.go is the SSH
+  server; guistate.go remembers the window size. Files with _windows
+  and _other suffixes hold the platform halves; the _other versions
+  exist so the package builds and tests on Linux.
 * cmd/tspo: the CLI. It is tailscale.com/cmd/tailscale/cli with a
   --socket flag pointing at the named pipe prepended to the args.
 * cmd/devtarget: a tsnet node serving an HTTP echo page on the test
-  tailnet, used as a fetch target during development. Not shipped.
+  tailnet, used as a fetch target and (with -exit-node) exit node
+  during development. cmd/devssh: a tsnet SSH client for testing the
+  SSH server from Linux. Neither is shipped.
 
 ### Per-profile config
 
@@ -273,9 +278,10 @@ testing this from Linux.
   profile config.
 
 * Should logtail uploads be disabled for a portable client?
-* Windows Firewall prompts when tsnet first binds UDP. Inbound direct
-  connections need the user to allow it (admin), outbound works
-  regardless. Do we warn in the GUI?
+* Windows Firewall: I expected a prompt when tsnet first bound UDP,
+  but none appeared on the test laptop and direct connections worked
+  both ways. Worth checking on a machine with stricter firewall
+  settings before deciding whether the GUI needs a warning.
 * Pulling the stick while running leaves the machine's proxy pointed
   at a dead port until tswipoexp runs there again. Could be mitigated
   by a tiny watchdog or by using a PAC URL served by the proxy, which
