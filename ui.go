@@ -287,7 +287,7 @@ func (u *UI) build() {
 	quitBtn := widget.NewButton("Quit and disconnect", a.quit)
 	u.reg("quit", quitBtn)
 	closeHint := widget.NewLabel("Closing the window keeps tswipoexp running in the tray.")
-	closeHint.Importance = widget.LowImportance
+	closeHint.TextStyle = fyne.TextStyle{Italic: true}
 
 	top := container.NewVBox(
 		container.NewGridWithColumns(2,
