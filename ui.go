@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"image/color"
 	"net/url"
 	"sort"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
@@ -30,21 +32,23 @@ type UI struct {
 	mu      sync.Mutex
 	widgets map[string]fyne.CanvasObject
 
-	profileSel *widget.Select
-	newProfile *widget.Entry
-	stateLabel *widget.Label
-	ipsLabel   *widget.Label
-	userLabel  *widget.Label
-	hostLabel  *widget.Label
-	proxyLabel *widget.Label
-	errLabel   *widget.Label
-	loginBtn   *widget.Button
-	authKey    *widget.Entry
-	authKeyBtn *widget.Button
-	logoutBtn  *widget.Button
-	connectBtn *widget.Button
-	outbound   *widget.Check // registered as the system proxy
-	inbound    *widget.Check // the inverse of Shields Up
+	profileSel       *widget.Select
+	stateDot         *canvas.Circle
+	stateLabel       *widget.Label
+	newProfileDialog *dialog.ConfirmDialog
+	ipsLabel         *widget.Label
+	userLabel        *widget.Label
+	hostLabel        *widget.Label
+	proxyLabel       *widget.Label
+	errLabel         *widget.Label
+	loginBtn         *widget.Button
+	authKey          *widget.Entry
+	authKeyCell      *fyne.Container
+	authKeyBtn       *widget.Button
+	logoutBtn        *widget.Button
+	connectBtn       *widget.Button
+	outbound         *widget.Check // registered as the system proxy
+	inbound          *widget.Check // the inverse of Shields Up
 	// outboundDialog and inboundDialog are the open settings dialogs,
 	// or nil.
 	outboundDialog *dialog.ConfirmDialog
@@ -91,27 +95,23 @@ func (u *UI) build() {
 	a := u.app
 
 	u.profileSel = widget.NewSelect(nil, func(name string) {
-		if name != "" && a.currentProfile() != name {
+		switch {
+		case name == "":
+		case name == newProfileItem:
+			u.showNewProfileDialog()
+		case a.currentProfile() != name:
 			a.switchProfile(name)
 		}
 	})
 	u.reg("profile", u.profileSel)
-	u.newProfile = widget.NewEntry()
-	u.newProfile.SetPlaceHolder("New profile name")
-	u.reg("newProfileName", u.newProfile)
-	newBtn := widget.NewButton("Create", func() {
-		name := strings.TrimSpace(u.newProfile.Text)
-		if name == "" {
-			return
-		}
-		if err := a.profiles.Create(name); err != nil {
-			u.showErr(err)
-			return
-		}
-		u.newProfile.SetText("")
-		a.switchProfile(name)
-	})
-	u.reg("createProfile", newBtn)
+
+	// The state dot: a small circle whose color tracks the backend
+	// state. It sits in a fixed cell so the row's height matches the
+	// labels next to it.
+	u.stateDot = canvas.NewCircle(stateColorGray)
+	u.stateDot.Resize(fyne.NewSize(14, 14))
+	u.stateDot.Move(fyne.NewPos(4, 12))
+	dotCell := container.NewGridWrap(fyne.NewSize(22, 38), container.NewWithoutLayout(u.stateDot))
 
 	u.stateLabel = widget.NewLabel("")
 	u.reg("state", u.stateLabel)
@@ -151,6 +151,9 @@ func (u *UI) build() {
 	u.authKey = widget.NewPasswordEntry()
 	u.authKey.SetPlaceHolder("tskey-auth-...")
 	u.reg("authKey", u.authKey)
+	// An entry in an HBox gets only its minimum width, so give it a
+	// fixed cell. The cell, not the entry, is what gets hidden.
+	u.authKeyCell = container.NewGridWrap(fyne.NewSize(300, 38), u.authKey)
 	u.authKeyBtn = widget.NewButton("Log in with auth key", func() {
 		b := a.backend
 		key := strings.TrimSpace(u.authKey.Text)
@@ -290,19 +293,14 @@ func (u *UI) build() {
 	closeHint.TextStyle = fyne.TextStyle{Italic: true}
 
 	top := container.NewVBox(
-		container.NewGridWithColumns(2,
-			container.NewBorder(nil, nil, widget.NewLabel("Profile:"), nil, u.profileSel),
-			container.NewBorder(nil, nil, nil, newBtn, u.newProfile),
-		),
+		container.NewBorder(nil, nil, widget.NewLabel("Profile:"), nil, u.profileSel),
 		widget.NewSeparator(),
-		u.stateLabel,
+		container.NewHBox(dotCell, u.stateLabel, u.loginBtn, u.authKeyCell, u.authKeyBtn, u.connectBtn, u.logoutBtn),
 		u.ipsLabel,
 		u.userLabel,
 		container.NewBorder(nil, nil, nil, hostBtn, u.hostLabel),
 		u.proxyLabel,
 		u.errLabel,
-		container.NewHBox(u.loginBtn, u.connectBtn, u.logoutBtn),
-		container.NewBorder(nil, nil, nil, u.authKeyBtn, u.authKey),
 		container.NewBorder(nil, nil, nil, outboundBtn, u.outbound),
 		container.NewBorder(nil, nil, nil, inboundBtn, u.inbound),
 		container.NewBorder(nil, nil, widget.NewLabel("Exit node:"), nil, u.exitNode),
@@ -425,7 +423,7 @@ func (u *UI) scheduleRefresh() {
 func (u *UI) refresh() {
 	a := u.app
 	names, _ := a.profiles.List()
-	u.profileSel.Options = names
+	u.profileSel.Options = append(append([]string(nil), names...), newProfileItem)
 	if cur := a.currentProfile(); u.profileSel.Selected != cur {
 		u.profileSel.SetSelected(cur)
 	} else {
@@ -434,7 +432,7 @@ func (u *UI) refresh() {
 
 	b := a.backend
 	if b == nil {
-		u.stateLabel.SetText("State: no profile loaded")
+		u.setState("No profile loaded", stateColorGray)
 		u.ipsLabel.SetText("")
 		u.userLabel.SetText("")
 		u.hostLabel.SetText("")
@@ -447,11 +445,18 @@ func (u *UI) refresh() {
 	cfg := b.Config()
 	st := b.Status()
 	if st == nil {
-		u.stateLabel.SetText("State: starting")
+		u.setState("Starting", stateColorGray)
 		return
 	}
 	state := st.BackendState
-	u.stateLabel.SetText("State: " + state)
+	switch state {
+	case ipn.Running.String():
+		u.setState("Running", stateColorGreen)
+	case ipn.NeedsLogin.String(), ipn.NeedsMachineAuth.String():
+		u.setState(stateText(state), stateColorRed)
+	default:
+		u.setState(stateText(state), stateColorGray)
+	}
 
 	var ips []string
 	for _, ip := range st.TailscaleIPs {
@@ -497,29 +502,30 @@ func (u *UI) refresh() {
 	u.errLabel.SetText(b.LastErr())
 
 	authURL := b.AuthURL()
-	switch state {
-	case ipn.NeedsLogin.String(), ipn.NoState.String():
-		u.loginBtn.Show()
-		if authURL != "" {
-			u.loginBtn.SetText("Log in with browser (open link)")
+	show := func(o fyne.CanvasObject, on bool) {
+		if on {
+			o.Show()
 		} else {
-			u.loginBtn.SetText("Log in with browser")
+			o.Hide()
 		}
-		u.authKey.Show()
-		u.authKeyBtn.Show()
-		u.logoutBtn.Hide()
-		u.connectBtn.Hide()
-	default:
-		u.loginBtn.Hide()
-		u.authKey.Hide()
-		u.authKeyBtn.Hide()
-		u.logoutBtn.Show()
-		u.connectBtn.Show()
-		if state == ipn.Running.String() {
-			u.connectBtn.SetText("Disconnect")
-		} else {
-			u.connectBtn.SetText("Connect")
-		}
+	}
+	needsLogin := state == ipn.NeedsLogin.String() || state == ipn.NoState.String()
+	show(u.loginBtn, needsLogin)
+	show(u.authKeyCell, needsLogin)
+	show(u.authKeyBtn, needsLogin)
+	if authURL != "" {
+		u.loginBtn.SetText("Log in with browser (open link)")
+	} else {
+		u.loginBtn.SetText("Log in with browser")
+	}
+	running := state == ipn.Running.String()
+	stopped := state == ipn.Stopped.String()
+	show(u.connectBtn, running || stopped)
+	show(u.logoutBtn, running || stopped)
+	if running {
+		u.connectBtn.SetText("Disconnect")
+	} else {
+		u.connectBtn.SetText("Connect")
 	}
 
 	prefs := a.prefs()
@@ -694,4 +700,77 @@ func peerRows(st *ipnstate.Status) []peerRow {
 		return rows[i].Name < rows[j].Name
 	})
 	return rows
+}
+
+// newProfileItem is the dropdown entry that creates a profile.
+const newProfileItem = "(New...)"
+
+// State dot colors.
+var (
+	stateColorGreen = color.NRGBA{R: 0x2e, G: 0xb8, B: 0x5c, A: 0xff}
+	stateColorRed   = color.NRGBA{R: 0xd0, G: 0x3a, B: 0x3a, A: 0xff}
+	stateColorGray  = color.NRGBA{R: 0x9a, G: 0x9a, B: 0x9a, A: 0xff}
+)
+
+// setState updates the state text and dot color.
+func (u *UI) setState(text string, c color.Color) {
+	u.stateLabel.SetText(text)
+	if u.stateDot.FillColor != c {
+		u.stateDot.FillColor = c
+		u.stateDot.Refresh()
+	}
+}
+
+// stateText turns an ipn.State name into words.
+func stateText(state string) string {
+	switch state {
+	case ipn.NeedsLogin.String():
+		return "Needs login"
+	case ipn.NeedsMachineAuth.String():
+		return "Needs approval in the admin console"
+	case ipn.Stopped.String():
+		return "Disconnected"
+	case ipn.Starting.String():
+		return "Starting"
+	case ipn.NoState.String():
+		return "Starting"
+	}
+	return state
+}
+
+// showNewProfileDialog asks for a profile name, creates it, and
+// switches to it. Cancelling puts the dropdown back on the current
+// profile.
+func (u *UI) showNewProfileDialog() {
+	a := u.app
+	entry := widget.NewEntry()
+	entry.SetPlaceHolder("Profile name, for example Work or Home")
+	u.reg("profile.name", entry)
+	content := container.NewVBox(
+		widget.NewLabel("Each profile is a separate node with its own login and settings,\nstored in its own directory under tswipoexp-state."),
+		entry,
+	)
+	d := dialog.NewCustomConfirm("New profile", "Create", "Cancel", content, func(ok bool) {
+		defer u.unregDialogWidgets("profile.")
+		cur := a.currentProfile()
+		if !ok {
+			u.profileSel.SetSelected(cur)
+			return
+		}
+		name := strings.TrimSpace(entry.Text)
+		if name == "" {
+			u.profileSel.SetSelected(cur)
+			return
+		}
+		if err := a.profiles.Create(name); err != nil {
+			u.showErr(err)
+			u.profileSel.SetSelected(cur)
+			return
+		}
+		a.switchProfile(name)
+	}, u.win)
+	u.newProfileDialog = d
+	d.SetOnClosed(func() { u.newProfileDialog = nil })
+	d.Resize(fyne.NewSize(520, 200))
+	d.Show()
 }

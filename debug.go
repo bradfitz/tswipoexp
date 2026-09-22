@@ -187,6 +187,8 @@ func (a *App) debugTap(w http.ResponseWriter, r *http.Request) {
 				d = a.ui.inboundDialog
 			case "hostname":
 				d = a.ui.hostnameDialog
+			case "profile":
+				d = a.ui.newProfileDialog
 			}
 			if d == nil {
 				err = fmt.Errorf("%s settings dialog is not open", prefix)
