@@ -224,11 +224,17 @@ rather than opening the browser unprompted.
 ### Exit nodes
 
 The GUI has an exit node dropdown listing peers with the exit node
-option, plus None, applied via EditPrefs. It is implemented but not
-yet exercised: the test tailnet has no approved exit node.
-cmd/devtarget has an -exit-node flag that advertises the routes;
-approving tswipoexp-target as an exit node in the admin console is
-needed to test it (action item for Brad).
+option, plus None, applied via EditPrefs. Tested end to end: with
+the exit node selected, curl through the proxy and Edge through the
+system proxy both egress from the exit node's public IP, and DNS
+goes via the exit node's peer API resolver.
+
+cmd/devtarget has an -exit-node flag that advertises the routes
+(approved by Brad in the admin console). A plain tsnet node can't act
+as an exit node because tsnet resets any TCP flow no listener claims;
+devtarget works around it with RegisterFallbackTCPHandler forwarding
+non-tailnet destinations. That's a tsnet limitation, not a tswipoexp
+one, and only matters for the test target.
 
 ## Open questions
 
@@ -260,7 +266,7 @@ Done:
 
 Next:
 
-6. Exit nodes: picker in the GUI (done, untested pending route approval).
+6. Exit nodes: picker in the GUI (done and tested).
 7. Inbound: Tailscale SSH (opt-in).
 8. Polish: browser login flow verified end to end, profile switching
    verified, tray icon, remembering window size.

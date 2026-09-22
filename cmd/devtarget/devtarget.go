@@ -7,8 +7,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"time"
@@ -22,6 +25,7 @@ func main() {
 	hostname := flag.String("hostname", "tswipoexp-target", "tailnet hostname")
 	dir := flag.String("dir", "", "state directory; defaults to ~/.cache/tswipoexp-devtarget")
 	exitNode := flag.Bool("exit-node", false, "advertise as an exit node (needs approval in the admin console)")
+	verbose := flag.Bool("verbose", false, "log tsnet internals")
 	flag.Parse()
 
 	if *dir == "" {
@@ -32,6 +36,9 @@ func main() {
 		Dir:      *dir,
 		Hostname: *hostname,
 		Logf:     func(string, ...any) {},
+	}
+	if *verbose {
+		s.Logf = log.Printf
 	}
 	defer s.Close()
 	ln, err := s.Listen("tcp", ":80")
@@ -58,6 +65,28 @@ func main() {
 			log.Fatal(err)
 		}
 		log.Printf("advertising exit node routes")
+		// tsnet resets TCP flows that no listener claims, so without
+		// this a tsnet node can't forward exit node traffic. Forward
+		// flows for non-local destinations to the real destination.
+		s.RegisterFallbackTCPHandler(func(src, dst netip.AddrPort) (func(net.Conn), bool) {
+			if tsaddr.IsTailscaleIP(dst.Addr()) {
+				return nil, false
+			}
+			return func(c net.Conn) {
+				defer c.Close()
+				out, err := net.DialTimeout("tcp", dst.String(), 30*time.Second)
+				if err != nil {
+					log.Printf("exit forward %v -> %v: %v", src, dst, err)
+					return
+				}
+				defer out.Close()
+				log.Printf("exit forward %v -> %v", src, dst)
+				done := make(chan struct{}, 2)
+				go func() { io.Copy(out, c); done <- struct{}{} }()
+				go func() { io.Copy(c, out); done <- struct{}{} }()
+				<-done
+			}, true
+		})
 	}
 	log.Fatal(http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		who, _ := s.LocalClient()
