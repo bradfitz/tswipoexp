@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
@@ -50,11 +51,11 @@ type UI struct {
 	inboundDialog  *dialog.ConfirmDialog
 	exitNode       *widget.Select
 	exitNodeIDs    map[string]tailcfg.StableNodeID // select option label to node
-	hostEntry      *widget.Entry
-	hostBtn        *widget.Button
-	hostSync       *widget.Check
+	peersLabel     *widget.Label
 	peersTable     *widget.Table
 	peersHeader    []string
+	peersWin       fyne.Window // the separate peers window, or nil when closed
+	hostnameDialog *dialog.ConfirmDialog
 
 	peers []peerRow // rows currently shown in the table
 
@@ -252,21 +253,13 @@ func (u *UI) build() {
 	u.exitNode.PlaceHolder = exitNodeNone
 	u.reg("exitNode", u.exitNode)
 
-	u.hostEntry = widget.NewEntry()
-	u.hostEntry.SetPlaceHolder(defaultHostname)
-	u.reg("hostnameEntry", u.hostEntry)
-	u.hostBtn = widget.NewButton("Set hostname", func() {
-		a.setHostname(strings.TrimSpace(u.hostEntry.Text), false)
-	})
-	u.reg("setHostname", u.hostBtn)
-	u.hostSync = widget.NewCheck("Use this computer's name", func(on bool) {
-		if on {
-			a.setHostname("", true)
-		} else {
-			a.setHostname(strings.TrimSpace(u.hostEntry.Text), false)
-		}
-	})
-	u.reg("hostnameSync", u.hostSync)
+	hostBtn := widget.NewButton("Edit...", u.showHostnameDialog)
+	u.reg("editHostname", hostBtn)
+
+	u.peersLabel = widget.NewLabel("Peers: 0")
+	u.reg("peersCount", u.peersLabel)
+	peersBtn := widget.NewButton("View...", u.showPeersWindow)
+	u.reg("viewPeers", peersBtn)
 
 	u.peersTable = widget.NewTableWithHeaders(
 		func() (int, int) { return len(u.peers), len(u.peersHeader) },
@@ -303,7 +296,7 @@ func (u *UI) build() {
 		u.stateLabel,
 		u.ipsLabel,
 		u.userLabel,
-		u.hostLabel,
+		container.NewBorder(nil, nil, nil, hostBtn, u.hostLabel),
 		u.proxyLabel,
 		u.errLabel,
 		container.NewHBox(u.loginBtn, u.connectBtn, u.logoutBtn),
@@ -311,12 +304,10 @@ func (u *UI) build() {
 		container.NewBorder(nil, nil, nil, outboundBtn, u.outbound),
 		container.NewBorder(nil, nil, nil, inboundBtn, u.inbound),
 		container.NewBorder(nil, nil, widget.NewLabel("Exit node:"), nil, u.exitNode),
-		container.NewBorder(nil, nil, widget.NewLabel("Hostname:"), container.NewHBox(u.hostBtn, u.hostSync), u.hostEntry),
-		widget.NewSeparator(),
-		widget.NewLabel("Peers"),
+		container.NewBorder(nil, nil, nil, peersBtn, u.peersLabel),
 	)
 	bottom := container.NewHBox(quitBtn)
-	u.win.SetContent(container.NewBorder(top, bottom, nil, nil, u.peersTable))
+	u.win.SetContent(container.NewBorder(top, bottom, nil, nil, layout.NewSpacer()))
 	size := defaultWindowSize
 	if gs := loadGUIState(a.profiles.Root); gs.WindowWidth > 200 && gs.WindowHeight > 200 {
 		size = fyne.NewSize(gs.WindowWidth, gs.WindowHeight)
@@ -447,6 +438,7 @@ func (u *UI) refresh() {
 		u.hostLabel.SetText("")
 		u.proxyLabel.SetText("")
 		u.peers = nil
+		u.peersLabel.SetText("Peers: 0")
 		u.peersTable.Refresh()
 		return
 	}
@@ -484,19 +476,6 @@ func (u *UI) refresh() {
 		dns = strings.TrimSuffix(st.Self.DNSName, ".")
 	}
 	u.hostLabel.SetText(fmt.Sprintf("Hostname: %s   DNS name: %s", host, dns))
-	if !u.hostEntry.Disabled() && u.hostEntry.Text == "" {
-		u.hostEntry.SetText(cfg.hostname())
-	}
-	if u.hostSync.Checked != cfg.SyncHostname {
-		u.hostSync.SetChecked(cfg.SyncHostname)
-	}
-	if cfg.SyncHostname {
-		u.hostEntry.Disable()
-		u.hostBtn.Disable()
-	} else {
-		u.hostEntry.Enable()
-		u.hostBtn.Enable()
-	}
 
 	if pa := b.ProxyAddr(); pa != "" {
 		reg := "not registered with Windows"
@@ -551,7 +530,73 @@ func (u *UI) refresh() {
 	u.refreshExitNodes(st, prefs)
 
 	u.peers = peerRows(st)
+	online := 0
+	for _, p := range u.peers {
+		if p.Online == "yes" {
+			online++
+		}
+	}
+	u.peersLabel.SetText(fmt.Sprintf("Peers: %d (%d online)", len(u.peers), online))
 	u.peersTable.Refresh()
+}
+
+// showPeersWindow opens, or brings forward, the window with the peer
+// table. The table is created once and kept in the main window's
+// widget registry; it just moves between windows' content.
+func (u *UI) showPeersWindow() {
+	if u.peersWin != nil {
+		u.peersWin.Show()
+		u.peersWin.RequestFocus()
+		return
+	}
+	w := u.app.fy.NewWindow("tswipoexp peers")
+	w.SetIcon(appIcon)
+	w.SetContent(u.peersTable)
+	w.Resize(fyne.NewSize(760, 480))
+	w.SetOnClosed(func() { u.peersWin = nil })
+	u.peersWin = w
+	w.Show()
+}
+
+// showHostnameDialog lets the user change the hostname advertised to
+// the control plane, or tie it to the computer's name.
+func (u *UI) showHostnameDialog() {
+	a := u.app
+	b := a.backend
+	if b == nil {
+		u.showErr(fmt.Errorf("no profile loaded"))
+		return
+	}
+	cfg := *b.Config()
+	entry := widget.NewEntry()
+	entry.SetPlaceHolder(defaultHostname)
+	entry.SetText(cfg.hostname())
+	u.reg("hostname.entry", entry)
+	sync := widget.NewCheck("Use this computer's name instead", func(on bool) {
+		if on {
+			entry.Disable()
+		} else {
+			entry.Enable()
+		}
+	})
+	sync.SetChecked(cfg.SyncHostname)
+	u.reg("hostname.sync", sync)
+	content := container.NewVBox(
+		widget.NewLabel("Enter the hostname to advertise to the control plane.\nThis influences what DNS name you're assigned."),
+		entry,
+		sync,
+	)
+	d := dialog.NewCustomConfirm("Hostname", "Save", "Cancel", content, func(ok bool) {
+		defer u.unregDialogWidgets("hostname.")
+		if !ok {
+			return
+		}
+		a.setHostname(strings.TrimSpace(entry.Text), sync.Checked)
+	}, u.win)
+	u.hostnameDialog = d
+	d.SetOnClosed(func() { u.hostnameDialog = nil })
+	d.Resize(fyne.NewSize(520, 220))
+	d.Show()
 }
 
 // exitNodeNone is the exit node dropdown's entry for no exit node.

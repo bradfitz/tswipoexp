@@ -39,4 +39,4 @@ func saveGUIState(root string, s guiState) error {
 // defaultWindowSize is the initial window size when none is saved.
 // It's shrunk after the window is shown if it doesn't fit the screen;
 // see UI.fitToScreen.
-var defaultWindowSize = fyne.NewSize(760, 660)
+var defaultWindowSize = fyne.NewSize(760, 520)

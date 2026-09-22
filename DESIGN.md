@@ -171,6 +171,15 @@ fails to create it and exits after showing a message box (the GUI
 binary has no console). The lock is taken before any profile
 directory is touched.
 
+### Main window
+
+The main window is deliberately sparse: profile picker, status lines
+(state, IPs, account, hostname with an Edit button, proxy), the
+login/connect/logout buttons, the two access rows below, the exit
+node picker, and a "Peers: N (M online)" line with a View button
+that opens the peer table in its own window. Hostname editing (and
+the "use this computer's name" option) lives in a dialog.
+
 ### Outbound and inbound access
 
 The main window has two top-level checkboxes, each with a Settings
