@@ -115,6 +115,12 @@ Cross-compiled from Linux (with Docker if needed for the cgo toolchain
 that Fyne requires). Testing is done on a Windows laptop reachable
 via tailcat; its address is in ~/keys/win-surface.
 
+Releases are cut by pushing a v* tag: GitHub Actions runs GoReleaser
+(.goreleaser.yaml), which builds tswipoexp.exe (cgo, mingw-w64) and
+tspo.exe (pure Go) for Windows amd64 into one zip and drafts a GitHub
+Release. See RELEASING.md. Windows arm64 is left out because mingw-w64
+can't target it; llvm-mingw could.
+
 ## Decisions taken while implementing
 
 These were made without discussion to keep moving. Revisit any of them.

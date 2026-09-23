@@ -1,0 +1,50 @@
+# GoReleaser configuration for tswipoexp releases.
+# See RELEASING.md for how to cut a release.
+version: 2
+
+builds:
+  # The GUI. Fyne needs cgo, hence the mingw-w64 compiler; the
+  # workflow installs it. Only amd64 for now: mingw-w64 has no
+  # arm64 target, so a Windows arm64 build would need llvm-mingw.
+  - id: tswipoexp
+    main: .
+    binary: tswipoexp
+    goos: [windows]
+    goarch: [amd64]
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-w64-mingw32-gcc
+      - CXX=x86_64-w64-mingw32-g++
+    ldflags:
+      # -H windowsgui keeps a console window from appearing.
+      - -s -w -H windowsgui -X main.version=v{{ .Version }}
+
+  # The CLI, which is the real tailscale CLI pointed at the GUI's
+  # named pipe. Pure Go.
+  - id: tspo
+    main: ./cmd/tspo
+    binary: tspo
+    goos: [windows]
+    goarch: [amd64]
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+
+archives:
+  # One zip with both binaries: unzip onto the USB stick and run.
+  - id: windows
+    ids: [tswipoexp, tspo]
+    formats: [zip]
+    name_template: tswipoexp_{{ .Version }}_windows_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  # Create the GitHub Release as a draft so release notes can be
+  # written before publishing.
+  draft: true

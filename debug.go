@@ -64,6 +64,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 // debugState summarizes the app state as JSON.
 func (a *App) debugState(w http.ResponseWriter, r *http.Request) {
 	type state struct {
+		Version     string
 		Profile     string
 		Profiles    []string
 		StateDir    string
@@ -78,7 +79,7 @@ func (a *App) debugState(w http.ResponseWriter, r *http.Request) {
 		Peers       []peerRow
 	}
 	names, _ := a.profiles.List()
-	s := state{Profile: a.currentProfile(), Profiles: names, StateDir: a.profiles.Root}
+	s := state{Version: version, Profile: a.currentProfile(), Profiles: names, StateDir: a.profiles.Root}
 	a.mu.Lock()
 	b := a.backend
 	a.mu.Unlock()

@@ -22,6 +22,9 @@ import (
 	"tailscale.com/ipn"
 )
 
+// version is set by the release build (-X main.version=...).
+var version = "dev"
+
 var (
 	debugAddr = flag.String("debug-addr", "", "if set, a loopback host:port on which to serve the debug and automation HTTP endpoint (off by default)")
 	stateDir  = flag.String("state-dir", "", "state directory; defaults to tswipoexp-state next to the executable")
