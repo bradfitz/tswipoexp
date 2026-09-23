@@ -59,12 +59,17 @@ func (s *logSink) Logf(format string, args ...any) {
 // is treated as one line.
 func (s *logSink) Write(p []byte) (int, error) {
 	line := string(bytes.TrimRight(p, "\r\n"))
+	// Do the I/O outside the lock: a stalled stderr pipe or a slow
+	// disk must not freeze every logger in the process.
+	s.mu.Lock()
+	f := s.file
+	s.mu.Unlock()
+	os.Stderr.Write(p)
+	if f != nil {
+		f.Write(p)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	os.Stderr.Write(p)
-	if s.file != nil {
-		s.file.Write(p)
-	}
 	s.lines = append(s.lines, line)
 	s.bytes += len(line)
 	s.next++

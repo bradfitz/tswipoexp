@@ -64,6 +64,7 @@ func main() {
 	if _, err := profiles.List(); err != nil {
 		fatal(logf, "state directory %s: %v", root, err)
 	}
+	redirectStderr(root)
 
 	bridge, err := newLocalAPIBridge(root, logf)
 	if err != nil {

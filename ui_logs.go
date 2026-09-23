@@ -25,6 +25,7 @@ type logViewer struct {
 	// scrolled to the bottom. If the list is later found scrolled
 	// above it, the user scrolled up, and Follow turns itself off.
 	lastBottom float32
+	shown      bool // the window has been shown, so the list can scroll
 	stop       chan struct{}
 }
 
@@ -59,7 +60,10 @@ func (u *UI) showLogViewer() {
 			v.scrollToBottom()
 		}
 	})
-	v.follow.SetChecked(true)
+	// Set the initial state directly: SetChecked would fire the
+	// callback and scroll a list that has no renderer yet, which
+	// panics inside Fyne.
+	v.follow.Checked = true
 	u.reg("logs.follow", v.follow)
 
 	clear := widget.NewButton("Clear", func() {
@@ -83,6 +87,7 @@ func (u *UI) showLogViewer() {
 	u.logs = v
 	v.pull()
 	v.win.Show()
+	v.shown = true
 	v.scrollToBottom()
 	go v.loop()
 }
@@ -139,6 +144,9 @@ func (v *logViewer) pull() bool {
 }
 
 func (v *logViewer) scrollToBottom() {
+	if !v.shown {
+		return
+	}
 	v.list.ScrollToBottom()
 	v.lastBottom = v.list.GetScrollOffset()
 }
