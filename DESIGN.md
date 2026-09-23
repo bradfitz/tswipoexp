@@ -1,3 +1,5 @@
+[this was initally written by [@bradfitz](https://github.com/bradfitz/), a human, and later taken over by LLMs]
+ 
 # tswipoexp design
 
 This is tswipoexp, an experiment at building a "Portable" Windows
@@ -54,8 +56,7 @@ not require admin rights.
 
 ### Exit nodes
 
-Supported, since userspace netstack handles them fine, but this comes
-after the basics work.
+Supported, since userspace netstack handles them fine.
 
 ### Inbound
 
@@ -329,39 +330,4 @@ The tailnet's Tailscale SSH policy is not consulted. Control does
 send it in the netmap (even without RunSSH), so a policy mode is
 possible, but the default policy uses check mode (holdAndDelegate),
 which needs a Noise round trip to control that tsnet doesn't expose.
-Deferred; see the open question below. cmd/devssh is a tsnet SSH client for
-testing this from Linux.
-
-## Open questions
-
-* An "as configured in tailnet policy" SSH mode would need check
-  mode support: either treat holdAndDelegate as reject, or add a
-  LocalAPI endpoint upstream that performs the SSH action fetch over
-  Noise for tsnet apps.
-
-* Windows Firewall: I expected a prompt when tsnet first bound UDP,
-  but none appeared on the test laptop and direct connections worked
-  both ways. Worth checking on a machine with stricter firewall
-  settings before deciding whether the GUI needs a warning.
-* Logtail uploads: Brad decided to leave this alone for now.
-* Testing the browser path on the laptop uses headless Edge via
-  tools/edge-dump.cmd; Edge produces no output when run directly from
-  PowerShell.
-
-## Plan
-
-Done:
-
-1. Hello World Fyne GUI cross-compiled from Linux and running on the Windows laptop.
-2. tsnet in the GUI: login, profile directories, status, peer list.
-3. SOCKS5 + HTTP proxy on localhost, registered with the Windows user session.
-4. tspo CLI over the LocalAPI.
-5. Hostname setting, Shields Up, auth key login.
-
-Next:
-
-6. Exit nodes: picker in the GUI (done and tested).
-7. Inbound: SSH (opt-in), done.
-8. Polish: tray icon and remembered window size (done); profile
-   switching verified; browser login URL verified (the actual browser
-   login step needs a human).
+Deferred for later.

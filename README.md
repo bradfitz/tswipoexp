@@ -62,8 +62,9 @@ it's not really maintained. You're welcome to use it, bugs and all.
 
 ## How it works
 
-All networking is in userspace with gVisor's netstack. Incoming and outgoing
-traffic can be individually enabled.
+See [DESIGN.md](DESIGN.md) for more details. But basically: all
+networking is in userspace with gVisor's netstack. Incoming and
+outgoing traffic can be individually enabled.
 
 Incoming traffic just TCP proxies to localhost (TCP is not end-to-end,
 but stitched, so local applications see 127.0.0.1 as the remote address
