@@ -153,6 +153,17 @@ func describe(name string, o fyne.CanvasObject, u *UI) widgetInfo {
 		wi.Options = v.Options
 	case *copyText:
 		wi.Text = v.value
+	case *widget.List:
+		if u.logs != nil && u.logs.list == v {
+			wi.Rows = len(u.logs.lines)
+			var sel []string
+			for i := range u.logs.lines {
+				if u.logs.selected[i] {
+					sel = append(sel, fmt.Sprint(i))
+				}
+			}
+			wi.Text = "selected: " + strings.Join(sel, ",")
+		}
 	case *widget.Table:
 		wi.Rows = len(u.peers)
 	}
@@ -220,6 +231,23 @@ func (a *App) debugTap(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fmt.Fprintf(w, "tapped %s\n", name)
+		return
+	}
+	if name == "logs.copy" {
+		// The Ctrl-C shortcut and the context menu both end here.
+		var err error
+		fyne.DoAndWait(func() {
+			if a.ui.logs == nil {
+				err = fmt.Errorf("log viewer is not open")
+				return
+			}
+			a.ui.logs.copySelection()
+		})
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		fmt.Fprintln(w, "copied selection")
 		return
 	}
 	o, ok := a.lookupWidget(name)
@@ -299,6 +327,19 @@ func (a *App) debugSet(w http.ResponseWriter, r *http.Request) {
 			}
 			v.SetSelected(match)
 		case *widget.List:
+			if a.ui.logs != nil && a.ui.logs.list == v {
+				// "N" selects row N; "N-M" selects a range.
+				var lo, hi int
+				if n, _ := fmt.Sscanf(text, "%d-%d", &lo, &hi); n == 2 {
+					a.ui.logs.selectOne(lo)
+					a.ui.logs.selectRange(hi)
+				} else if n, _ := fmt.Sscanf(text, "%d", &lo); n == 1 {
+					a.ui.logs.selectOne(lo)
+				} else {
+					err = fmt.Errorf("bad row spec %q", text)
+				}
+				return
+			}
 			if a.ui.profileMgr != nil && a.ui.profileMgr.list == v {
 				for i, n := range a.ui.profileMgr.names {
 					if n == text {
