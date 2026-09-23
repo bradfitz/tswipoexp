@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -229,6 +230,10 @@ func (v *logViewer) stopFollowing() {
 	}
 }
 
+// clipboardEOL is the line ending for multi-line clipboard text;
+// Windows apps expect CRLF.
+var clipboardEOL = map[bool]string{true: "\r\n", false: "\n"}[runtime.GOOS == "windows"]
+
 // copySelection puts the selected rows, in order, on the clipboard.
 func (v *logViewer) copySelection() {
 	if len(v.selected) == 0 {
@@ -238,7 +243,7 @@ func (v *logViewer) copySelection() {
 	for i := range v.lines {
 		if v.selected[i] {
 			b.WriteString(v.lines[i])
-			b.WriteString("\n")
+			b.WriteString(clipboardEOL)
 		}
 	}
 	v.u.app.fy.Clipboard().SetContent(b.String())
@@ -246,5 +251,5 @@ func (v *logViewer) copySelection() {
 
 // copyAll puts every buffered row on the clipboard.
 func (v *logViewer) copyAll() {
-	v.u.app.fy.Clipboard().SetContent(strings.Join(v.lines, "\n") + "\n")
+	v.u.app.fy.Clipboard().SetContent(strings.Join(v.lines, clipboardEOL) + clipboardEOL)
 }
