@@ -60,6 +60,12 @@ Windows client work like this? (The answer: seems like it!)
 I should proactively declare that this might have security problems and that
 it's not really maintained. You're welcome to use it, bugs and all.
 
+## Unofficial
+
+This is not a Tailscale product and is not maintained by Tailscale. It
+is a personal experiment. Tailscale owns the copyright because I work
+for Tailscale. See the Warnings and Disclaimer above.
+
 ## How it works
 
 See [DESIGN.md](DESIGN.md) for more details. But basically: all
