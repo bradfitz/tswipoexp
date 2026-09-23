@@ -35,6 +35,7 @@ type UI struct {
 
 	profileSel       *widget.Select
 	profileMgr       *profileManager
+	logs             *logViewer
 	renameDialog     *dialog.ConfirmDialog
 	deleteDialog     *dialog.ConfirmDialog
 	stateDot         *canvas.Circle
@@ -363,7 +364,9 @@ func (u *UI) build() {
 		indent(container.NewBorder(nil, nil, u.exitNodeLabel, nil, u.exitNode)),
 		container.NewBorder(nil, nil, nil, inboundBtn, u.inbound),
 	)
-	bottom := container.NewBorder(nil, nil, quitBtn, nil, closeHint)
+	logsBtn := widget.NewButton("Logs...", u.showLogViewer)
+	u.reg("logs", logsBtn)
+	bottom := container.NewBorder(nil, nil, quitBtn, logsBtn, closeHint)
 	u.win.SetContent(container.NewBorder(top, bottom, nil, nil, layout.NewSpacer()))
 	size := defaultWindowSize
 	if gs := loadGUIState(a.profiles.Root); gs.WindowWidth > 200 && gs.WindowHeight > 200 {

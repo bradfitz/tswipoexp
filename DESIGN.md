@@ -266,7 +266,11 @@ scale once the window exists.
 
 ### Logging
 
-Each profile has a tswipoexp.log next to its tsnet state. tsnet's
+Each profile has a tswipoexp.log next to its tsnet state. All of it,
+including tsnet's verbose lines, also goes to an in-memory buffer
+capped at 50 MB, shown by the Logs button in a live viewer window
+(Follow checkbox that turns itself off when the user scrolls up, and
+a Clear button that empties the buffer but not the file). tsnet's
 own logtail configuration and upload behavior is left at its default,
 which means logs are uploaded to Tailscale's log service like any
 tsnet app. Open question: whether a portable client should do that.
