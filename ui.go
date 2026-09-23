@@ -51,6 +51,10 @@ type UI struct {
 	dnsCopy          *copyText
 	hostHint         *widget.Label
 	peersHint        *widget.Label
+	peersAll         []peerRow // every peer, before the peers window filter
+	peersSearch      *widget.Entry
+	peersActive      *widget.Check
+	peersShown       *widget.Label
 	proxyLabel       *widget.Label
 	errLabel         *widget.Label
 	loginBtn         *widget.Button
@@ -83,6 +87,8 @@ type UI struct {
 type peerRow struct {
 	Name, IP, OS, Online, Path string
 	CopyName                   string // the plain short hostname, without annotations
+	Active                     bool   // has a WireGuard session with this node right now
+	search                     string // lowercase text the peers window filter matches against
 }
 
 func newUI(a *App) *UI {
@@ -299,6 +305,14 @@ func (u *UI) build() {
 
 	u.peersHint = widget.NewLabel("")
 	u.peersHint.TextStyle = fyne.TextStyle{Italic: true}
+	u.peersSearch = widget.NewEntry()
+	u.peersSearch.SetPlaceHolder("Search peers (name, IP, OS, path)")
+	u.peersSearch.OnChanged = func(string) { u.applyPeerFilter() }
+	u.reg("peers.search", u.peersSearch)
+	u.peersActive = widget.NewCheck("Active peers only", func(bool) { u.applyPeerFilter() })
+	u.reg("peers.active", u.peersActive)
+	u.peersShown = widget.NewLabel("")
+	u.reg("peers.shown", u.peersShown)
 	u.peersTable = widget.NewTableWithHeaders(
 		func() (int, int) { return len(u.peers), len(u.peersHeader) },
 		func() fyne.CanvasObject {
@@ -501,9 +515,9 @@ func (u *UI) refresh() {
 		u.hostLabel.SetText("")
 		u.dnsCopy.SetValue("")
 		u.proxyLabel.SetText("")
-		u.peers = nil
+		u.peersAll = nil
 		u.peersLabel.SetText("Peers: 0")
-		u.peersTable.Refresh()
+		u.applyPeerFilter()
 		return
 	}
 	cfg := b.Config()
@@ -599,14 +613,38 @@ func (u *UI) refresh() {
 	u.setOutboundLook(cfg.registerProxy())
 	u.refreshExitNodes(st, prefs)
 
-	u.peers = peerRows(st)
+	u.peersAll = peerRows(st)
 	online := 0
-	for _, p := range u.peers {
+	for _, p := range u.peersAll {
 		if p.Online == "yes" {
 			online++
 		}
 	}
-	u.peersLabel.SetText(fmt.Sprintf("Peers: %d (%d online)", len(u.peers), online))
+	u.peersLabel.SetText(fmt.Sprintf("Peers: %d (%d online)", len(u.peersAll), online))
+	u.applyPeerFilter()
+}
+
+// applyPeerFilter recomputes the rows the peers window shows from
+// the search text and the active-only checkbox, and refreshes the
+// table. It runs on the UI goroutine.
+func (u *UI) applyPeerFilter() {
+	q := strings.ToLower(strings.TrimSpace(u.peersSearch.Text))
+	activeOnly := u.peersActive.Checked
+	u.peers = u.peers[:0]
+	for _, p := range u.peersAll {
+		if activeOnly && !p.Active {
+			continue
+		}
+		if q != "" && !strings.Contains(p.search, q) {
+			continue
+		}
+		u.peers = append(u.peers, p)
+	}
+	if len(u.peers) == len(u.peersAll) {
+		u.peersShown.SetText(fmt.Sprintf("%d peers", len(u.peersAll)))
+	} else {
+		u.peersShown.SetText(fmt.Sprintf("%d of %d peers", len(u.peers), len(u.peersAll)))
+	}
 	u.peersTable.Refresh()
 }
 
@@ -621,8 +659,9 @@ func (u *UI) showPeersWindow() {
 	}
 	w := u.app.fy.NewWindow("tswipoexp peers")
 	w.SetIcon(appIcon)
-	w.SetContent(container.NewBorder(nil, u.peersHint, nil, nil, u.peersTable))
-	w.Resize(fyne.NewSize(760, 480))
+	top := container.NewBorder(nil, nil, nil, container.NewHBox(u.peersActive, u.peersShown), u.peersSearch)
+	w.SetContent(container.NewBorder(top, u.peersHint, nil, nil, u.peersTable))
+	w.Resize(fyne.NewSize(800, 520))
 	w.SetOnClosed(func() { u.peersWin = nil })
 	u.peersWin = w
 	w.Show()
@@ -754,7 +793,13 @@ func peerRows(st *ipnstate.Status) []peerRow {
 		} else if p.ExitNodeOption {
 			name += " (exit node option)"
 		}
-		rows = append(rows, peerRow{Name: name, CopyName: short, IP: ip, OS: p.OS, Online: online, Path: path})
+		var ips []string
+		for _, a := range p.TailscaleIPs {
+			ips = append(ips, a.String())
+		}
+		row := peerRow{Name: name, CopyName: short, IP: ip, OS: p.OS, Online: online, Path: path, Active: p.Active}
+		row.search = strings.ToLower(strings.Join(append(ips, name, strings.TrimSuffix(p.DNSName, "."), p.HostName, p.OS, path), " "))
+		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].Online != rows[j].Online {
